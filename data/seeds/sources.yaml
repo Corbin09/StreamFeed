@@ -1,0 +1,27 @@
+# Source definitions loaded into the `sources` table.
+# Post content from these sources may be Vietnamese or English.
+sources:
+  - type: itviec
+    name: ITviec - IT jobs
+    enabled: true
+    interval_minutes: 120
+    config:
+      keywords: []          # e.g. ["python", "react"]; empty = all IT jobs
+      locations: []         # e.g. ["ha-noi", "ho-chi-minh-hcm"]
+
+  - type: linkedin
+    name: LinkedIn - Job search
+    enabled: false          # enable after running the manual login CLI
+    interval_minutes: 180
+    config:
+      keywords: ["software engineer"]
+      location: "Vietnam"
+      max_posts_per_run: 50
+
+  - type: facebook
+    name: Facebook - IT job groups
+    enabled: false          # enable after running the manual login CLI
+    interval_minutes: 180
+    config:
+      groups: []            # group URLs or IDs
+      max_posts_per_run: 50

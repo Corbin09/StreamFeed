@@ -1,0 +1,29 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+.next/
+out/
+
+# Data (crawled content and browser sessions must never be committed)
+data/raw/*
+!data/raw/.gitkeep
+data/browser_profiles/*
+!data/browser_profiles/.gitkeep
+data/exports/*
+!data/exports/.gitkeep
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
