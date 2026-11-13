@@ -28,7 +28,12 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest                                  # all tests
 .venv/bin/pytest tests/test_health.py::test_health  # single test
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
+.venv/bin/alembic upgrade head                                 # apply migrations
+.venv/bin/alembic revision --autogenerate -m "describe change"  # new migration
+.venv/bin/python -m app.seed                                   # upsert data/seeds/sources.yaml
 ```
+
+DB tests (`tests/test_db.py`) create and migrate a separate `streamfeed_test` database on the same server. Each test runs in a rolled-back transaction, and the tests are skipped if Postgres is down. The backend container runs `alembic upgrade head` and `app.seed` on every start.
 
 Postgres is mapped to host port **5433**, because 5432 is taken on the dev machine. Inside compose, the backend reaches it at `postgres:5432`.
 
@@ -39,7 +44,15 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
 - `docker-compose.yml`: Postgres 16 + FastAPI backend.
 - `backend/app/main.py`: FastAPI app with a `/health` endpoint.
 - `backend/app/config.py`: pydantic-settings that read `.env` or `../.env`. `CORS_ORIGINS` is a comma-separated string, exposed as `cors_origin_list`.
-- `data/seeds/sources.yaml`: source definitions.
+- `data/seeds/sources.yaml`: source definitions, loaded by `app/seed.py`. The loader upserts by `name` but never overwrites the runtime `enabled`/`status` of existing sources.
+- `backend/app/models/`: `Source`, `Post`, `CrawlRun` (SQLAlchemy 2.0).
+  - Statuses are plain strings validated by CHECK constraints built from `StrEnum`s, so adding a status means a migration that updates the constraint.
+  - `sources.type` and `posts.category` are unconstrained strings, so new plugins and categories need no migration.
+- **Search plumbing:** the first migration creates the `unaccent` and `pg_trgm` extensions plus `f_unaccent(text)`, an IMMUTABLE wrapper. Always use `f_unaccent` (never `unaccent`) in indexes, generated columns and queries.
+  - `posts.search_vector` is a generated column (title A, company B, body C, `simple` config), backed by a GIN index.
+  - There is also a trigram GIN index on `f_unaccent(title)`.
+  - Query pattern: `search_vector @@ plainto_tsquery('simple', f_unaccent(:q))`.
+- `posts.price_min/price_max/currency` hold the salary for jobs and the asking price for listings. `duplicate_of_id` links a cross-source duplicate to the canonical post.
 
 ### Planned design (follow it when adding features)
 
