@@ -18,7 +18,9 @@ Run all commands from the repo root unless noted.
 
 ```bash
 cp .env.example .env                 # first time only
-docker compose up -d --build         # postgres (host port 5433) + backend (port 8000) + frontend (port 3000)
+docker compose up -d --build         # dev: postgres (127.0.0.1:5433), backend (127.0.0.1:8000), worker, frontend (:3000)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build  # server/demo: only :3000, Basic Auth required
+docker compose logs -f worker        # watch scheduled crawls
 docker compose up -d postgres        # DB only, for local backend dev
 curl localhost:8000/health
 scripts/render-diagrams.sh           # export Mermaid diagrams to docs/diagrams/mermaid/ (gitignored, on demand)
@@ -34,6 +36,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/alembic revision --autogenerate -m "describe change"  # new migration
 .venv/bin/python -m app.seed                                   # upsert data/seeds/sources.yaml
 .venv/bin/python -m app.crawlers list|run <source>|reparse <run_id>  # crawler CLI
+.venv/bin/python -m app.worker                                 # worker loop (Ctrl+C stops after the current crawl)
 
 # Frontend (run from frontend/)
 npm install
@@ -50,7 +53,8 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
 
 ### Built so far
 
-- `docker-compose.yml`: Postgres 16 + FastAPI backend.
+- `docker-compose.yml`: `postgres`, `backend` (API, migrates + seeds on start, healthcheck), `worker` (same image, `python -m app.worker`), `frontend`. Postgres and API ports bind to `127.0.0.1` only.
+- `docker-compose.prod.yml` (override): removes the Postgres/API ports and requires `BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD`, `POSTGRES_PASSWORD`. Put HTTPS (tunnel or Caddy) in front.
 - `backend/app/main.py`: FastAPI app; routers in `app/api/routes/` (see the REST API bullet below).
 - `backend/app/config.py`: pydantic-settings that read `.env` or `../.env`. `CORS_ORIGINS` is a comma-separated string, exposed as `cors_origin_list`.
 - `data/seeds/sources.yaml`: source definitions, loaded by `app/seed.py`. The loader upserts by `name` but never overwrites the runtime `enabled`/`status` of existing sources.
@@ -88,8 +92,10 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
   - "Run now" (`POST /sources/{id}/run`) only inserts a `queued` run (row-locked, 409 on an active run, `needs_login` or missing plugin).
   - Settings: `USD_VND_RATE` (salary filter), `STALE_AFTER_DAYS`. Crawler class attributes `label` and `min_interval_minutes` are exposed to the API.
   - API tests (`tests/test_api.py`) override `get_session` with `session_factory`.
+- **Worker** (`app/worker/`, ARCHITECTURE.md §4 "Worker loop as built"): main loop does one crawl per tick: orphan recovery (a `running` run whose advisory lock is free), then the oldest `queued` run (claimed and flipped to `running` in one `SKIP LOCKED` transaction), then the most overdue source (`last_run_at + interval × 2^failures (max ×8) ± jitter`). Heartbeat (30 s) and housekeeping (24 h: raw pages > 30 days, runs > 90 days) run on an APScheduler thread. Tests in `tests/test_worker.py` reuse the fake crawler from `tests/test_runner.py`.
 - **Frontend** (`frontend/`, Next.js App Router + Tailwind v4 + React Query; see `frontend/README.md`):
-  - Routes: `/` (feed), `/posts/[id]`, `/admin/sources`. All pages are client components that call the API at `NEXT_PUBLIC_API_URL` (inlined at build time; compose passes it as a build arg).
+  - Routes: `/` (feed), `/posts/[id]`, `/admin/sources`. All pages are client components that call `/api/*` on their own origin; `next.config.ts` rewrites it to `API_INTERNAL_URL` (build time: `http://localhost:8000` in dev, `http://backend:8000` in the image).
+  - `src/middleware.ts` (Node.js runtime) enforces Basic Auth on every path when `BASIC_AUTH_USER`/`BASIC_AUTH_PASSWORD` are set at runtime.
   - **The URL's search params are sent to `GET /posts` unchanged**, so filter keys in the UI must equal API parameter names. The sidebar is generated from `/meta/categories`.
   - The salary "pay rail" (`components/PayRail.tsx`) puts every post on one USD scale ($0–6k+, VND converted with `usd_vnd_rate` from `/meta/categories`).
   - Design tokens are CSS variables in `src/app/globals.css` (light + dark). Font: Be Vietnam Pro with the Vietnamese subset.

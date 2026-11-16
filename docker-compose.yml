@@ -1,3 +1,6 @@
+# Development / single-machine stack. For a server or a public demo, add the production
+# override, which closes the database and API ports and requires a login:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 services:
   postgres:
     image: postgres:16-alpine
@@ -7,7 +10,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-streamfeed}
       POSTGRES_DB: ${POSTGRES_DB:-streamfeed}
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      # Loopback only: reachable from this machine (local backend dev), never from the network.
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -16,6 +20,7 @@ services:
       timeout: 3s
       retries: 10
 
+  # REST API. Runs migrations and the source seed on start. Never crawls.
   backend:
     build: ./backend
     restart: unless-stopped
@@ -24,26 +29,55 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-streamfeed}:${POSTGRES_PASSWORD:-streamfeed}@postgres:5432/${POSTGRES_DB:-streamfeed}
       DATA_DIR: /data
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/data
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
+  # Scheduler + queue poller + crawlers (python -m app.worker). Same image as the API: the
+  # current plugins only need HTTP. A Playwright image arrives with the LinkedIn plugin.
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-streamfeed}:${POSTGRES_PASSWORD:-streamfeed}@postgres:5432/${POSTGRES_DB:-streamfeed}
+      DATA_DIR: /data
+    volumes:
+      - ./data:/data
+    depends_on:
+      # The API container applies migrations; wait until it is up.
+      backend:
+        condition: service_healthy
+    # Let an in-flight crawl finish on `docker compose stop`; an interrupted run is marked
+    # failed by the next worker start (orphan recovery).
+    stop_grace_period: 2m
+
+  # Next.js UI. The browser only talks to this service; /api/* is proxied to the backend.
   frontend:
     build:
       context: ./frontend
       args:
-        # Inlined into the browser bundle: the URL the *browser* uses to reach the API.
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        API_INTERNAL_URL: http://backend:8000
     restart: unless-stopped
+    environment:
+      # Optional here; required by docker-compose.prod.yml.
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
+      BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD:-}
     ports:
       - "3000:3000"
     depends_on:
-      - backend
-
-  # The worker (scheduler) service is added in step 7.
+      backend:
+        condition: service_healthy
 
 volumes:
   pgdata:

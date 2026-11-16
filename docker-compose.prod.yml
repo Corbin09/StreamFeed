@@ -1,0 +1,21 @@
+# Production / public-demo override (ARCHITECTURE.md §12):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# - Postgres and the API publish no ports; only the frontend (port 3000) is reachable, and it
+#   proxies /api/* to the backend over the compose network.
+# - The site requires HTTP Basic Auth, and a database password must be set in .env.
+# - Put HTTPS in front (Caddy, Cloudflare Tunnel, ngrok...): Basic Auth over plain HTTP
+#   sends the password in clear text.
+services:
+  postgres:
+    ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+
+  backend:
+    ports: !reset []
+
+  frontend:
+    environment:
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:?Set BASIC_AUTH_USER in .env}
+      BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD:?Set BASIC_AUTH_PASSWORD in .env}

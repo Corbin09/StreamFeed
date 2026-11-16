@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # /health/worker reports the worker as down when its heartbeat is older than this.
     worker_heartbeat_max_age_seconds: int = 120
 
+    # Worker: idle poll interval for queued runs and due sources; retention (§15).
+    worker_poll_seconds: int = 15
+    raw_retention_days: int = 30
+    run_retention_days: int = 90
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

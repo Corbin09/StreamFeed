@@ -1,6 +1,8 @@
 // Typed client for the StreamFeed REST API (backend/app/api, ARCHITECTURE.md §8).
 
-export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
+// Same-origin by default: Next.js proxies /api/* to the backend (next.config.ts).
+// Set NEXT_PUBLIC_API_URL only to call an API on another origin directly.
+export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "/api").replace(/\/$/, "");
 
 export type SourceRef = { id: number; type: string; name: string };
 
@@ -126,9 +128,12 @@ async function request<T>(path: string, init?: RequestInit & { allowStatus?: num
       headers: { "Content-Type": "application/json", ...init?.headers },
     });
   } catch {
-    throw new ApiError(0, `Can't reach the API at ${API_URL}. Start it with "docker compose up -d".`);
+    throw new ApiError(0, `Can't reach the server. Check your connection, or start the stack with "docker compose up -d".`);
   }
   const body = await res.json().catch(() => null);
+  if (res.status === 502 || res.status === 504 || (res.status === 500 && body === null)) {
+    throw new ApiError(res.status, "The API isn't responding. Check that the backend container is running.");
+  }
   if (!res.ok && !init?.allowStatus?.includes(res.status)) {
     const detail = body?.detail;
     const message = typeof detail === "string" ? detail : `Request failed (${res.status})`;

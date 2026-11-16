@@ -107,11 +107,11 @@ person(80, 30, ORANGE, "You", "(browser)")
 label(255, 52, "Search · Filter|Save · Run now")
 arrow([(150, 82), (360, 82)], both=True)
 monitor(450, 25)
-box(330, 165, 240, 52, "Web UI", "Next.js · React Query")
+box(330, 165, 240, 52, "Web UI", "Next.js · Basic Auth")
 
 # API
 arrow([(450, 217), (450, 300)], both=True)
-label(462, 266, "REST / JSON", anchor="start")
+label(462, 266, "/api proxy · JSON", anchor="start")
 box(330, 300, 240, 52, "API", "FastAPI · never crawls")
 
 # Postgres (stack)

@@ -1,7 +1,11 @@
 # StreamFeed frontend
 
-Next.js (App Router) + Tailwind CSS v4 + React Query. It only talks to the REST API
-(`NEXT_PUBLIC_API_URL`, default `http://localhost:8000`). See `docs/ARCHITECTURE.md` §9.
+Next.js (App Router) + Tailwind CSS v4 + React Query. The browser calls `/api/*` on the same
+origin and the Next.js server forwards it to the backend (`API_INTERNAL_URL`, build time;
+`http://localhost:8000` in dev, `http://backend:8000` in compose). See `docs/ARCHITECTURE.md` §9, §12.
+
+Set `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD` (runtime) to require a login for the whole site
+(`src/middleware.ts`); without them the site is open, which is fine on localhost only.
 
 ```bash
 npm install

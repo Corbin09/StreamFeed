@@ -28,9 +28,9 @@
 <rect x="405" y="139" width="90" height="10" rx="5" fill="#4A4A4A"/>
 <rect x="330" y="165" width="240" height="52" fill="#F9B54C" stroke="#E39B2B" stroke-width="1.5"/>
 <text x="450.0" y="187.0" class="t">Web UI</text>
-<text x="450.0" y="207.0" class="s">Next.js · React Query</text>
+<text x="450.0" y="207.0" class="s">Next.js · Basic Auth</text>
 <path d="M450,217 L450,300" fill="none" stroke="#4A4A4A" stroke-width="1.6" marker-start="url(#ah)" marker-end="url(#ah)"/>
-<text x="462" y="266" class="lbl" text-anchor="start">REST / JSON</text>
+<text x="462" y="266" class="lbl" text-anchor="start">/api proxy · JSON</text>
 <rect x="330" y="300" width="240" height="52" fill="#F9B54C" stroke="#E39B2B" stroke-width="1.5"/>
 <text x="450.0" y="322.0" class="t">API</text>
 <text x="450.0" y="342.0" class="s">FastAPI · never crawls</text>

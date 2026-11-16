@@ -52,6 +52,18 @@ uvicorn app.main:app --reload
 pytest
 ```
 
+### Deploy or share a demo
+
+Only the frontend is published; it proxies `/api` to the backend and asks for a login.
+
+```bash
+# in .env: BASIC_AUTH_USER, BASIC_AUTH_PASSWORD and a strong POSTGRES_PASSWORD (before the first start)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+ngrok http 3000          # or Cloudflare Tunnel / Caddy: always serve it over HTTPS
+```
+
+The worker crawls ITviec every 2 hours (change it on the Sources page) and starts right away when the last run is older than that.
+
 ### Local frontend development
 
 ```bash

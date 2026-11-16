@@ -62,7 +62,7 @@ flowchart TB
     subgraph host["Docker Compose host"]
         fe["frontend<br/>Next.js"]
         api["api<br/>FastAPI"]
-        worker["worker<br/>scheduler + crawlers + pipeline<br/>(Playwright image)"]
+        worker["worker<br/>scheduler + crawlers + pipeline<br/>(backend image)"]
         db[("postgres<br/>PostgreSQL 16")]
         vol[/"data/ volume<br/>raw/ · sessions/ · seeds/ · backups/"/]
     end
@@ -79,7 +79,7 @@ flowchart TB
 |-----------|------|----------------|
 | `frontend` | Next.js (App Router), Tailwind, React Query | UI only; talks to `api` over REST. |
 | `api` | FastAPI, SQLAlchemy | Search, CRUD, admin, enqueue manual runs. Runs migrations + seed on start. **Never crawls.** |
-| `worker` *(planned)* | Same backend codebase, `python -m app.worker`, image `mcr.microsoft.com/playwright/python` | Scheduling, crawling, pipeline, housekeeping. |
+| `worker` | Same backend codebase and image, `python -m app.worker`. Switches to `mcr.microsoft.com/playwright/python` when the first browser plugin (LinkedIn) lands. | Scheduling, crawling, pipeline, housekeeping. |
 | `postgres` | PostgreSQL 16 + `unaccent`, `pg_trgm` | System of record **and** the job queue. |
 | `data/` | Bind-mounted directory | Raw pages, login sessions, seed files, DB backups. |
 
@@ -117,7 +117,7 @@ flowchart LR
         subgraph pipe["pipeline/"]
             lang["language"] --> norm["normalize"] --> cls["classify"] --> val["validate"] --> dd["dedup + upsert"]
         end
-        house["Housekeeping<br/>(raw cleanup, backups)"]
+        house["Housekeeping<br/>(raw + run retention)"]
     end
     sched --> runner
     poll --> runner
@@ -128,6 +128,14 @@ flowchart LR
     runner --> pipe
     dd --> db[(postgres)]
 ```
+
+**Worker loop as built** (`app/worker/__init__.py`): one crawl at a time in the main thread; each tick does at most one unit of work, then sleeps `WORKER_POLL_SECONDS` (15) only when idle.
+
+1. **Orphan recovery:** a `running` run whose source advisory lock is free belongs to a dead worker and is marked `failed`. This replaces the time-based `recover_stale_runs` and also covers a worker killed mid-crawl by `docker compose stop`.
+2. **Queue:** claim the oldest `queued` run with `FOR UPDATE SKIP LOCKED` and flip it to `running` in the same transaction, so two workers cannot take the same row. If the source is busy (lock held), the run goes back to `queued`.
+3. **Schedule:** a source is due when `last_run_at + interval_minutes × backoff ± jitter` has passed (never-run sources are due at once). Backoff is `2^consecutive_failures`, capped at ×8. Jitter is drawn per source from `±CRAWL_JITTER_MINUTES` and redrawn after each run. Skipped: disabled sources, `needs_login`, no installed plugin, or an active run. The most overdue source runs first. Schedule changes made in the UI apply on the next tick; there are no per-source scheduler jobs to resync.
+4. **Background thread (APScheduler):** heartbeat every 30 s (upsert `worker_heartbeat`), housekeeping every 24 h (delete `data/raw/<type>/<date>/` older than `RAW_RETENTION_DAYS` = 30, and finished `crawl_runs` older than `RUN_RETENTION_DAYS` = 90).
+5. **Shutdown:** SIGTERM/SIGINT stop the loop after the current crawl; compose gives it `stop_grace_period: 2m`.
 
 ### Crawler contract
 
@@ -511,7 +519,7 @@ Code: `app/api/routes/*` (routers), `app/api/schemas.py` (models), `app/services
 - **Dynamic filters:** `/meta/categories` drives the tabs and the sidebar. A new category appears without frontend changes, except optional custom rendering.
 - **Rendering:** the layout uses server components; feed, filters and admin are client components (React Query, `useInfiniteQuery`).
 - **URL = API query:** the page's search params are passed to `GET /posts` unchanged (plus `limit` and `cursor`), so UI filter keys equal API parameter names. Changing a filter replaces the URL; it never pushes history entries for each keystroke (the search box is debounced by 300 ms).
-- **Configuration:** `NEXT_PUBLIC_API_URL`, inlined at build time (a Docker build arg in compose).
+- **Configuration:** the browser calls `/api/*` on its own origin; the Next.js server proxies it to `API_INTERNAL_URL` (build time). `NEXT_PUBLIC_API_URL` can point the client at another origin instead. `BASIC_AUTH_USER`/`BASIC_AUTH_PASSWORD` (runtime) turn on the login.
 - **Display:** UI labels are in English and post content is shown unchanged (with its `lang` attribute). Relative times look like "2h ago", and salaries like "15–25M VND" or "$2,000–3,000".
 - **Pay rail:** every feed row and the detail page draw the salary as a bar on one shared USD scale ($0 to 6k+, VND converted with `usd_vnd_rate` from `/meta/categories`). The rails line up in a column, so pay can be compared down the feed. Negotiable posts show a dashed, empty track.
 - **Per-viewer state:** the time of the previous visit is kept in `localStorage` to mark posts crawled since then. Saved/hidden state is server-side (`PATCH /posts/{id}`), with optimistic cache updates and an undo toast for Hide.
@@ -555,30 +563,34 @@ Code: `app/api/routes/*` (routers), `app/api/schemas.py` (models), `app/services
 
 ```mermaid
 flowchart LR
-    subgraph vps["Laptop or VPS"]
-        caddy["Caddy<br/>HTTPS + basic auth<br/><i>VPS only</i>"]
-        fe[frontend :3000]
+    subgraph host["Laptop or VPS (docker compose)"]
+        fe["frontend :3000<br/>Basic Auth + /api proxy"]
         api[api :8000]
         wk[worker]
         pg[(postgres :5432)]
         data[/./data/]
     end
-    user([User]) --> caddy --> fe & api
+    user([User]) -- HTTPS --> edge["ngrok / Cloudflare Tunnel / Caddy"] --> fe
+    fe -- "/api/* (compose network)" --> api
     api --> pg
     wk --> pg
-    api -- ro --> data
+    api --> data
     wk -- rw --> data
 ```
 
-- **Compose services:** `postgres`, `api` (currently named `backend`), `worker`, `frontend`.
-  - `api` runs `alembic upgrade head` and `app.seed` on start.
-  - `worker` waits for `api` to be healthy and never migrates.
-- **Local:** Postgres is exposed on host port 5433 for development. Login sessions are created on the host and picked up by the worker through the `./data` mount. The Playwright versions on the host and in the worker image must match.
-- **VPS:**
-  - Only Caddy is published.
-  - `api` and `postgres` stay on the internal network.
-  - Basic auth protects the whole site, because there are no accounts but the admin endpoints can trigger crawls.
-- **Backups:** the worker runs a daily `pg_dump` into `data/backups/` and keeps 7 copies (the folder is gitignored).
+- **Compose services:** `postgres`, `backend` (the API), `worker`, `frontend`.
+  - `backend` runs `alembic upgrade head` and `app.seed` on start and has a `/health` healthcheck.
+  - `worker` and `frontend` wait for `backend` to be healthy; the worker never migrates.
+- **One public entry point.** The browser only talks to the frontend origin. `next.config.ts` rewrites `/api/*` to `API_INTERNAL_URL` (`http://backend:8000`, fixed at image build time), so the API needs no public port, no CORS, and the image does not depend on the public hostname.
+- **Access control:** `frontend/src/middleware.ts` (Node.js runtime) enforces HTTP Basic Auth on every path, `/api/*` included, when `BASIC_AUTH_USER`/`BASIC_AUTH_PASSWORD` are set. There are no accounts, and the admin endpoints can change sources and trigger crawls, so a reachable instance must have them set. Credentials are compared in constant time.
+- **Local development** (`docker-compose.yml` alone): Postgres (5433) and the API (8000) are published on `127.0.0.1` only; the frontend on 3000. Basic Auth is optional.
+- **Server or public demo:** add `docker-compose.prod.yml`:
+  - Postgres and the API publish no ports (`ports: !reset []`).
+  - `BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD` and `POSTGRES_PASSWORD` are required (compose refuses to start without them).
+  - Put HTTPS in front: Basic Auth over plain HTTP exposes the password. A tunnel (ngrok, Cloudflare Tunnel) needs no open inbound port; on a VPS, Caddy with automatic HTTPS works too.
+  - `POSTGRES_PASSWORD` only takes effect when the volume is first created. To change it later, run `ALTER USER` inside Postgres as well.
+- **Login sessions** (LinkedIn/Facebook, planned) are created on the host and reach the worker through the `./data` mount. The Playwright versions on the host and in the worker image must match.
+- *(planned)* **Backups:** a daily `pg_dump` into `data/backups/` (gitignored), keeping 7 copies.
 
 ---
 
@@ -593,8 +605,8 @@ flowchart LR
   - Scraped content is only shown to the owner.
   - There is no public API and no re-publishing.
 - **Network:**
-  - CORS allows only the frontend origin.
-  - On a VPS, everything sits behind basic auth (section 12).
+  - Only the frontend is published in production; it proxies `/api/*` to the API over the compose network.
+  - Every path, the API included, sits behind Basic Auth when deployed (section 12). CORS still allows only the frontend origin for direct API use in development.
 
 ---
 
