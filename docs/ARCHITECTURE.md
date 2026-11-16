@@ -416,38 +416,40 @@ All matching runs on lower-cased, unaccented text. The alias dictionaries live i
 
 ## 8. API
 
-Base URL: `/`. JSON only. Errors use `{"detail": ...}`.
+Base URL: `/`. JSON only. Errors use `{"detail": ...}`. Interactive docs: `/docs` (OpenAPI).
+Code: `app/api/routes/*` (routers), `app/api/schemas.py` (models), `app/services/search.py` (feed query).
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/health` | API liveness. |
-| GET | `/health/worker` | 200 if the worker heartbeat is newer than 2 min, else 503. |
+| GET | `/health/worker` | 200 if the newest worker heartbeat is at most 2 min old, else 503 (`status`: `ok`, `stale`, `missing`). |
 | GET | `/posts` | Feed and search (parameters below). |
-| GET | `/posts/{id}` | Post detail, including duplicates. |
+| GET | `/posts/{id}` | Post detail with `body` and `duplicates` (the other posts of its duplicate group). |
 | PATCH | `/posts/{id}` | `{is_saved?, is_hidden?}` |
-| GET | `/sources` | Sources with status and the last run. |
-| PATCH | `/sources/{id}` | `{enabled?, interval_minutes?, config?}` |
-| POST | `/sources/{id}/run` | Enqueue a manual run → `202 {run_id}`; `409` if one is already queued or running. |
-| GET | `/runs` | `?source_id=&limit=`: recent crawl runs. |
-| GET | `/stats` | Counts per source and category, new posts in the last 24 h. |
-| GET | `/meta/categories` | Categories with a **filter schema** derived from their Pydantic attribute schemas (field, type, enum values, label). |
+| GET | `/sources` | Sources with status, plugin info (`plugin_available`, `category`, `min_interval_minutes`), `post_count` and `last_run`. |
+| GET | `/sources/{id}` | One source, same shape. |
+| PATCH | `/sources/{id}` | `{enabled?, interval_minutes?, config?}`; `config` replaces the whole object. `422` if the interval is below the plugin's `min_interval_minutes` (30 by default, 180 for login-based sources). |
+| POST | `/sources/{id}/run` | Enqueue a manual run → `202 {run_id}`. `409` if a run is already queued or running, the source is `needs_login`, or no plugin is installed for its type. The source row is locked (`FOR UPDATE`) so double clicks queue one run. |
+| GET | `/runs` | `?source_id=&status=&limit=` (max 100): recent crawl runs, newest first. |
+| GET | `/runs/{id}` | One run; the UI polls it after "Run now". |
+| GET | `/stats` | Default-feed counts: `total`, `new_24h` (by `crawled_at`), `saved`, per category, per source. |
+| GET | `/meta/categories` | Categories (those with an attribute schema or with posts) and their **filter schema** with option counts. |
 
 ### `GET /posts` parameters
 
 - **Search and filters:**
-  - `q`
+  - `q`: full-text, accent-insensitive (`plainto_tsquery('simple', f_unaccent(q))`)
   - `category` (default `job`)
-  - `source_type[]`
-  - `location[]`
-  - `level[]`
-  - `language`
-  - `salary_min_usd`
-  - `since`: `24h`, `7d` or `30d`
+  - `source_type` (repeatable)
+  - `language`: `vi` or `en`
+  - `salary_min_usd`: keeps posts whose upper price (`price_max`, else `price_min`) is at least this much; VND is converted with `USD_VND_RATE`. Posts without a number (negotiable) are excluded.
+  - `since`: `24h`, `7d` or `30d`, on `coalesce(posted_at, crawled_at)`
   - `saved`
-  - `include_hidden`, `include_duplicates`, `include_stale`
+  - **Attribute filters:** every attribute schema field marked `json_schema_extra={"filter": "<Label>"}` is a parameter named after the field. Jobs: `levels`, `skills`, `locations`, `work_mode`, `expertise`. Repeat a parameter for several values; any value matches (`?levels=senior&levels=lead`). Filters on different parameters combine with AND. Matching uses JSONB containment (`attributes @> ...`), served by the GIN index.
+  - **Visibility:** `include_hidden`, `include_duplicates`, `include_stale`. A post is stale when `last_seen_at` is older than `STALE_AFTER_DAYS` (30), or, for Facebook, when it was posted more than 30 days ago. `saved=true` ignores staleness, since saved posts are kept forever.
 - **Sorting and paging:**
-  - `sort`: `relevance` (the default when `q` is set) or `newest`
-  - `cursor`: opaque, base64 of `(sort_key, id)`
+  - `sort`: `relevance` (the default when `q` is set; `ts_rank_cd`) or `newest`
+  - `cursor`: opaque, URL-safe base64 of `{sort, key, id}`; keyset paging on `(key, id) DESC`. A cursor from another sort order, or a malformed one, returns `400`.
   - `limit`: maximum 50, default 20
 - **Response:**
 
@@ -456,17 +458,45 @@ Base URL: `/`. JSON only. Errors use `{"detail": ...}`.
   "items": [
     {
       "id": 123, "title": "...", "company": "...", "url": "...",
-      "source": {"type": "itviec", "name": "ITviec - IT jobs"},
+      "source": {"id": 1, "type": "itviec", "name": "ITviec - IT jobs"},
       "category": "job", "language": "vi", "location": "hanoi",
       "price_min": 2000, "price_max": 3000, "currency": "USD",
       "attributes": {"levels": ["senior"], "skills": ["python"]},
-      "posted_at": "2026-11-16T08:00:00Z", "is_saved": false,
-      "also_on": ["linkedin"], "snippet": "..."
+      "posted_at": "2026-11-16T08:00:00Z", "crawled_at": "2026-11-16T08:05:00Z",
+      "is_saved": false, "is_hidden": false, "duplicate_of_id": null,
+      "also_on": ["linkedin"], "snippet": "first 240 characters of the body…"
     }
   ],
   "next_cursor": "eyJ..."
 }
 ```
+
+`also_on` lists the other source types in the post's duplicate group (the canonical post plus every post whose `duplicate_of_id` points at it).
+
+### `GET /meta/categories` response
+
+```json
+{
+  "categories": [
+    {
+      "key": "job", "label": "Jobs", "price_label": "Salary", "post_count": 60,
+      "filters": [
+        {"key": "source_type", "label": "Source", "type": "multi_select",
+         "options": [{"value": "itviec", "label": "ITviec", "count": 60}]},
+        {"key": "language", "label": "Language", "type": "select", "options": [...]},
+        {"key": "levels", "label": "Level", "type": "multi_select",
+         "options": [{"value": "senior", "label": "Senior", "count": 17}, ...]},
+        {"key": "locations", "label": "Location", "type": "multi_select",
+         "options": [{"value": "hcmc", "label": "Ho Chi Minh City", "count": 33}, ...]}
+      ]
+    }
+  ]
+}
+```
+
+- Each filter `key` is a `GET /posts` parameter. Counts cover the default feed.
+- Options of `Literal` fields come from the schema, in schema order, including zero counts. Free-valued fields (skills, locations, expertise) list the 100 most frequent values from the data.
+- Labels: source types use the plugin's `label`, locations use `labels:` in `app/pipeline/data/locations.yaml`.
 
 ---
 

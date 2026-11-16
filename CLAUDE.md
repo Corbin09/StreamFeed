@@ -45,7 +45,7 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
 ### Built so far
 
 - `docker-compose.yml`: Postgres 16 + FastAPI backend.
-- `backend/app/main.py`: FastAPI app with a `/health` endpoint.
+- `backend/app/main.py`: FastAPI app; routers in `app/api/routes/` (see the REST API bullet below).
 - `backend/app/config.py`: pydantic-settings that read `.env` or `../.env`. `CORS_ORIGINS` is a comma-separated string, exposed as `cors_origin_list`.
 - `data/seeds/sources.yaml`: source definitions, loaded by `app/seed.py`. The loader upserts by `name` but never overwrites the runtime `enabled`/`status` of existing sources.
 - `backend/app/models/`: `Source`, `Post`, `CrawlRun` (SQLAlchemy 2.0).
@@ -76,6 +76,12 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
   6. `dedup.link_duplicates` (same `content_hash`, other source, oldest wins, 30-day window).
 
   The alias dictionaries are `app/pipeline/data/*.yaml`. Fix a mapping there, then run `reparse <run_id>` to re-apply it without crawling.
+- **REST API** (`app/api/`, ARCHITECTURE.md §8): `posts`, `sources`, `runs`, `stats`, `meta`, `health` routers; models in `app/api/schemas.py`, ORM→model mapping in `app/api/serializers.py`.
+  - The feed query lives in `app/services/search.py`: filters, default visibility (not hidden, not duplicate, not stale) and keyset cursors over `(sort_key, id)`. `/stats` and `/meta` reuse `visibility_conditions`.
+  - **Attribute filters are schema-driven:** a field in `app/schemas/attributes/<category>.py` with `json_schema_extra={"filter": "<Label>"}` becomes a `GET /posts` query parameter of the same name and appears in `/meta/categories`. No router change is needed.
+  - "Run now" (`POST /sources/{id}/run`) only inserts a `queued` run (row-locked, 409 on an active run, `needs_login` or missing plugin).
+  - Settings: `USD_VND_RATE` (salary filter), `STALE_AFTER_DAYS`. Crawler class attributes `label` and `min_interval_minutes` are exposed to the API.
+  - API tests (`tests/test_api.py`) override `get_session` with `session_factory`.
 - **ITviec plugin** (`app/crawlers/itviec.py`): fetches listing cards, then detail pages (JSON-LD `JobPosting`); `external_id` is the job slug. Parser tests use trimmed real pages in `tests/fixtures/itviec/`. When ITviec changes its markup, save a fresh page there and update the fixtures.
 - **Test helpers:** use the `session_factory` fixture (real commits, tables truncated afterwards) for code that manages its own sessions. Fake crawlers are registered on a local `CrawlerRegistry` (see `tests/test_runner.py`).
 - `posts.price_min/price_max/currency` hold the salary for jobs and the asking price for listings. `duplicate_of_id` links a cross-source duplicate to the canonical post.

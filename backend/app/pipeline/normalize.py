@@ -57,6 +57,11 @@ def normalize_locations(raw: Iterable[str | None]) -> list[str]:
 LEVEL_ORDER = list(_load("levels")["levels"])
 
 
+def location_label(key: str) -> str:
+    """Display name of a canonical location key, e.g. 'hcmc' -> 'Ho Chi Minh City'."""
+    return _load("locations").get("labels", {}).get(key) or key.replace("_", " ").title()
+
+
 def detect_levels(title: str) -> list[str]:
     """Seniority levels named in a title, ordered junior -> senior.
 

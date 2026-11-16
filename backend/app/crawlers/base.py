@@ -107,10 +107,13 @@ class BaseCrawler(ABC):
     """
 
     type: ClassVar[str]  # matches sources.type, e.g. "itviec"
+    label: ClassVar[str | None] = None  # display name of the source type, e.g. "ITviec"
     category: ClassVar[str] = Category.JOB
     default_max_posts: ClassVar[int] = 200
     # True for mixed sources (Facebook groups): non-hiring posts are dropped by the pipeline.
     filter_non_jobs: ClassVar[bool] = False
+    # Lowest interval the API accepts for sources of this type (login-based sources: 180).
+    min_interval_minutes: ClassVar[int] = 30
 
     def create_fetcher(self) -> Fetcher:
         """Return the fetcher for one run. The runner closes it afterwards."""

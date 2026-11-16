@@ -1,8 +1,9 @@
-"""FastAPI entry point."""
+"""FastAPI entry point. The API reads and writes the database; it never crawls."""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes import health, meta, posts, runs, sources, stats
 from app.config import get_settings
 
 settings = get_settings()
@@ -16,7 +17,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+for module in (health, posts, sources, runs, stats, meta):
+    app.include_router(module.router)

@@ -14,3 +14,19 @@ locations:
   quynhon: [quy nhon, binh dinh]
   remote: [remote, fully remote, lam tu xa, work from home, wfh]
   overseas: [overseas, nuoc ngoai, japan, nhat ban, singapore]
+
+# Display names for the canonical keys (used by /meta/categories).
+labels:
+  hanoi: Hanoi
+  hcmc: Ho Chi Minh City
+  danang: Da Nang
+  haiphong: Hai Phong
+  cantho: Can Tho
+  hue: Hue
+  nhatrang: Nha Trang
+  binhduong: Binh Duong
+  dongnai: Dong Nai
+  bacninh: Bac Ninh
+  quynhon: Quy Nhon
+  remote: Remote
+  overseas: Overseas

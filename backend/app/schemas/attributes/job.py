@@ -13,13 +13,26 @@ WorkMode = Literal["onsite", "hybrid", "remote"]
 class JobAttributes(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    levels: list[Level] = Field(default_factory=list, description="Seniority levels in the title")
-    skills: list[str] = Field(default_factory=list, description="Canonical skill keys")
-    locations: list[str] = Field(default_factory=list, description="All canonical locations")
-    work_mode: WorkMode | None = None
+    levels: list[Level] = Field(
+        default_factory=list,
+        description="Seniority levels in the title",
+        json_schema_extra={"filter": "Level"},
+    )
+    skills: list[str] = Field(
+        default_factory=list,
+        description="Canonical skill keys",
+        json_schema_extra={"filter": "Skill"},
+    )
+    locations: list[str] = Field(
+        default_factory=list,
+        description="All canonical locations",
+        json_schema_extra={"filter": "Location"},
+    )
+    work_mode: WorkMode | None = Field(None, json_schema_extra={"filter": "Work mode"})
     salary_negotiable: bool = False
     salary_text: str | None = Field(None, description="Salary as written by the source")
     employment_type: str | None = None  # e.g. FULL_TIME
-    expertise: str | None = None  # source's job category, e.g. "Backend Developer"
+    # Source's job category, e.g. "Backend Developer".
+    expertise: str | None = Field(None, json_schema_extra={"filter": "Expertise"})
     experience_months: int | None = None
     valid_through: str | None = None  # ISO date the source says the post expires

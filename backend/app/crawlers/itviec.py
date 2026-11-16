@@ -104,6 +104,7 @@ def _experience_months(value) -> int | None:
 @register
 class ItviecCrawler(BaseCrawler):
     type = "itviec"
+    label = "ITviec"
     default_max_posts = 60
 
     # ------------------------------------------------------------------ fetch
