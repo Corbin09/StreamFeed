@@ -21,6 +21,7 @@ cp .env.example .env                 # first time only
 docker compose up -d --build         # postgres (host port 5433) + backend (port 8000)
 docker compose up -d postgres        # DB only, for local backend dev
 curl localhost:8000/health
+scripts/render-diagrams.sh           # export Mermaid diagrams in docs/ARCHITECTURE.md to docs/diagrams/
 
 # Backend (run from backend/)
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -56,7 +57,7 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
 
 ### Target design
 
-The full design is in **`docs/ARCHITECTURE.md`**: containers, components, data model, flows, pipeline rules, API, reliability policies and ADRs. Read the relevant section before building a step, and update the doc whenever the design changes.
+The full design is in **`docs/ARCHITECTURE.md`**: containers, components, data model, flows, pipeline rules, API, reliability policies and ADRs. Read the relevant section before building a step, and update the doc whenever the design changes. After editing a diagram, re-run `scripts/render-diagrams.sh` so `docs/diagrams/` stays in sync.
 
 Data flow:
 

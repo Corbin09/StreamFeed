@@ -51,6 +51,17 @@ uvicorn app.main:app --reload
 pytest
 ```
 
+## Architecture diagrams
+
+The diagrams in `docs/ARCHITECTURE.md` are Mermaid blocks. GitHub and VS Code (with a Mermaid preview extension) render them inline. To export them as image files:
+
+```bash
+scripts/render-diagrams.sh                                   # docs/ARCHITECTURE.md -> docs/diagrams/*.svg|png
+scripts/render-diagrams.sh docs/ARCHITECTURE.md out/ "png pdf" # custom input, output dir, formats
+```
+
+The script requires Node.js 18+. The first run downloads mermaid-cli and Chromium. Re-run it after editing a diagram.
+
 ## Notes on LinkedIn / Facebook crawling
 
 These sources are crawled with a logged-in browser session. Use a **secondary account**, keep crawl rates low, and never commit `data/browser_profiles/`. When a login or checkpoint page is detected, the source is paused and marked `needs_login`.
