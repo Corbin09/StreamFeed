@@ -60,7 +60,13 @@ scripts/render-diagrams.sh                                   # docs/ARCHITECTURE
 scripts/render-diagrams.sh docs/ARCHITECTURE.md out/ "png pdf" # custom input, output dir, formats
 ```
 
-The script requires Node.js 18+. The first run downloads mermaid-cli and Chromium. Re-run it after editing a diagram.
+The illustrated overview at the top of the doc (`docs/diagrams/streamfeed-overview.svg|png`) is drawn by a separate script. Edit its layout section and re-run it:
+
+```bash
+scripts/render-overview.py
+```
+
+The scripts require Node.js 18+. The first run downloads mermaid-cli and Chromium. Re-run it after editing a diagram.
 
 ## Notes on LinkedIn / Facebook crawling
 

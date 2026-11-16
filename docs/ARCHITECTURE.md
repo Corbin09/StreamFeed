@@ -2,6 +2,8 @@
 
 Status: **approved design**. Implemented so far: project scaffold and database schema (steps 1–2). Items marked *(planned)* are not built yet.
 
+![StreamFeed system overview](diagrams/streamfeed-overview.png)
+
 ---
 
 ## 1. Requirements
