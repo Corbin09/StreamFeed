@@ -1,0 +1,604 @@
+# StreamFeed — System Architecture
+
+Status: **approved design**. Implemented so far: project scaffold and database schema (steps 1–2). Items marked *(planned)* are not built yet.
+
+---
+
+## 1. Requirements
+
+### Functional
+
+| ID | Requirement |
+|----|-------------|
+| F1 | Crawl IT job posts from ITviec, LinkedIn and Facebook groups every 1–3 hours. |
+| F2 | Normalize posts written in Vietnamese or English: salary, location, level, skills, language. |
+| F3 | Merge the same post seen on multiple sources ("Also on: LinkedIn"). |
+| F4 | Accent-insensitive full-text search (`lap trinh` matches `lập trình`) plus filters: source, location, salary, level, language, posted time. |
+| F5 | Save and hide posts. Hidden posts never reappear. |
+| F6 | Admin page: source status, last run, enable/disable, interval, "Run now". |
+| F7 | Phase 2: marketplace categories (vehicles, real estate, keyboards, mice) with category-specific filters. |
+
+### Non-functional
+
+| ID | Requirement |
+|----|-------------|
+| N1 | Single user, no accounts. |
+| N2 | Low volume: ~200–1,000 new posts/day, DB < 1 GB/year. |
+| N3 | Crawler robustness and **not getting accounts banned** matter more than freshness or speed. |
+| N4 | Adding a source or a category must not require schema migrations. |
+| N5 | Runs on a laptop or a small VPS (2 GB RAM) via Docker Compose. |
+| N6 | All code and UI in English. Post content is stored unchanged in VI or EN. |
+
+---
+
+## 2. System context
+
+```mermaid
+flowchart LR
+    user([User<br/>browser])
+    sf[StreamFeed]
+    itviec[(ITviec<br/>public pages)]
+    li[(LinkedIn<br/>logged-in)]
+    fb[(Facebook groups<br/>logged-in)]
+    later[(Phase 2:<br/>Chợ Tốt, Batdongsan, ...)]
+    tg[Telegram<br/><i>planned alerts</i>]
+
+    user -- "search, filter, save, admin" --> sf
+    sf -- "HTTP (httpx)" --> itviec
+    sf -- "headless browser (Playwright)" --> li
+    sf -- "headless browser (Playwright)" --> fb
+    sf -.-> later
+    sf -. "needs_login / error alerts" .-> tg
+```
+
+---
+
+## 3. Containers
+
+```mermaid
+flowchart TB
+    subgraph host["Docker Compose host"]
+        fe["frontend<br/>Next.js"]
+        api["api<br/>FastAPI"]
+        worker["worker<br/>scheduler + crawlers + pipeline<br/>(Playwright image)"]
+        db[("postgres<br/>PostgreSQL 16")]
+        vol[/"data/ volume<br/>raw/ · sessions/ · seeds/ · backups/"/]
+    end
+    user([User]) --> fe
+    fe -- "REST/JSON" --> api
+    api -- "SQL" --> db
+    worker -- "SQL (posts, runs, queue)" --> db
+    worker -- "write raw pages,<br/>read sessions" --> vol
+    api -- "read seeds" --> vol
+    worker -- "HTTP / browser" --> ext[(Source sites)]
+```
+
+| Container | Tech | Responsibility |
+|-----------|------|----------------|
+| `frontend` | Next.js (App Router), Tailwind, React Query | UI only; talks to `api` over REST. |
+| `api` | FastAPI, SQLAlchemy | Search, CRUD, admin, enqueue manual runs. Runs migrations + seed on start. **Never crawls.** |
+| `worker` *(planned)* | Same backend codebase, `python -m app.worker`, image `mcr.microsoft.com/playwright/python` | Scheduling, crawling, pipeline, housekeeping. |
+| `postgres` | PostgreSQL 16 + `unaccent`, `pg_trgm` | System of record **and** the job queue. |
+| `data/` | Bind-mounted directory | Raw pages, login sessions, seed files, DB backups. |
+
+### Key decisions
+
+- **`api` and `worker` are separate processes.** A browser uses 300–500 MB RAM and crashes occasionally; the API must stay up regardless. Both share one codebase (`backend/app`), so models and the pipeline are not duplicated.
+- **Postgres is the queue (no Redis/Celery).**
+  - "Run now" inserts a `crawl_runs` row with `status='queued'`.
+  - The worker claims it every 15 s with `SELECT … FOR UPDATE SKIP LOCKED`.
+  - At this scale an extra broker would be pure operational cost.
+- **One run per source at a time.** This is enforced with `pg_try_advisory_lock(source_id)`, which covers both scheduled and manual runs.
+- **One browser at a time.** A process-wide semaphore keeps the RAM bound and makes traffic look human.
+
+---
+
+## 4. Components
+
+```mermaid
+flowchart LR
+    subgraph worker["worker"]
+        sched["Scheduler<br/>(APScheduler)"]
+        poll["Queue poller"]
+        runner["CrawlRunner"]
+        subgraph crawlers["crawlers/ (plugins)"]
+            reg["registry"]
+            itv["ItviecCrawler"]
+            lnk["LinkedinCrawler"]
+            fbk["FacebookCrawler"]
+        end
+        subgraph fetch["fetchers"]
+            http["HttpFetcher<br/>httpx + retry"]
+            brw["BrowserFetcher<br/>Playwright + storage_state"]
+        end
+        raw["RawStore"]
+        subgraph pipe["pipeline/"]
+            lang["language"] --> norm["normalize"] --> cls["classify"] --> val["validate"] --> dd["dedup + upsert"]
+        end
+        house["Housekeeping<br/>(raw cleanup, backups)"]
+    end
+    sched --> runner
+    poll --> runner
+    runner --> reg --> itv & lnk & fbk
+    itv --> http
+    lnk & fbk --> brw
+    runner --> raw
+    runner --> pipe
+    dd --> db[(postgres)]
+```
+
+### Crawler contract
+
+```python
+class BaseCrawler(ABC):
+    type: ClassVar[str]                 # "itviec", matches sources.type
+    fetcher: ClassVar[type[Fetcher]]    # HttpFetcher | BrowserFetcher
+
+    @abstractmethod
+    def fetch(self, ctx: CrawlContext) -> Iterator[RawPage]: ...
+    #   ctx = source config, run id, fetcher, limits; yields pages as they are fetched
+
+    @abstractmethod
+    def parse(self, page: RawPage) -> list[RawPost]: ...
+    #   pure function of the page content -> enables re-parse from disk and fixture tests
+```
+
+- `RawPage` holds `url`, `fetched_at`, `content_type` and `body`.
+- `RawPost` holds the source-level fields: `external_id`, `url`, `title`, `body`, `company`, `author`, raw salary/location strings, `posted_at` and a `extra` dict.
+- `parse` must stay pure, with no network or DB access. That keeps crawlers testable with HTML fixtures and lets raw pages be re-parsed later.
+- `registry.py` maps `type` to the crawler class. `sources.type` selects the plugin, and `sources.config` (JSONB) holds per-source parameters such as keywords, group URLs and `max_posts_per_run`.
+
+### CrawlRunner (one run)
+
+1. Try the advisory lock on `source_id`. If it is busy, skip the run (and drop the queued request).
+2. Create or claim the `crawl_runs` row (`running`, `trigger`, `raw_dir`).
+3. For each page from `crawler.fetch()`:
+   - Write it to the RawStore.
+   - Run `crawler.parse()`. A parse error on one page or post is logged and skipped.
+4. Feed all `RawPost`s through the pipeline in one transaction per batch of 50.
+5. Finish the run: set `status`, the counters and `finished_at`. Update `sources.status`, `last_run_at` and `consecutive_failures`.
+
+### RawStore
+
+- Layout: `data/raw/<source_type>/<YYYY-MM-DD>/<run_id>/<n>.html|json`, plus `manifest.json` with the url, fetched_at and content type of each file.
+- `crawl_runs.raw_dir` points to the run's folder. `python -m app.crawlers reparse <run_id>` replays the run without touching the network.
+
+---
+
+## 5. Data model
+
+```mermaid
+erDiagram
+    sources ||--o{ posts : has
+    sources ||--o{ crawl_runs : has
+    posts |o--o{ posts : "duplicate_of"
+
+    sources {
+        int id PK
+        string type "plugin key: itviec | linkedin | facebook | ..."
+        string name UK
+        jsonb config
+        bool enabled
+        int interval_minutes
+        string status "idle | ok | needs_login | error"
+        int consecutive_failures "(planned)"
+        timestamptz last_run_at
+        text last_error
+    }
+    posts {
+        bigint id PK
+        int source_id FK
+        string external_id "UK with source_id"
+        text url
+        string category "job | vehicle | real_estate | keyboard | mouse"
+        text title
+        text body
+        string language "vi | en | null"
+        string author
+        string company
+        string location "canonical key, e.g. hanoi"
+        numeric price_min "salary or asking price"
+        numeric price_max
+        string currency "VND | USD"
+        jsonb attributes "category-specific"
+        string content_hash
+        bigint duplicate_of_id FK
+        bool is_saved
+        bool is_hidden
+        timestamptz posted_at
+        timestamptz crawled_at
+        timestamptz last_seen_at "(planned)"
+        tsvector search_vector "generated"
+    }
+    crawl_runs {
+        bigint id PK
+        int source_id FK
+        string status "queued(planned) | running | success | failed | needs_login"
+        string trigger "(planned) schedule | manual"
+        text raw_dir "(planned)"
+        int fetched
+        int inserted
+        int updated
+        text error
+        timestamptz started_at
+        timestamptz finished_at
+    }
+    worker_heartbeat {
+        string worker_id PK "(planned)"
+        timestamptz beat_at
+    }
+```
+
+### Schema conventions
+
+- **Generic posts.** Every category lives in `posts`, and category-specific fields go in `attributes`.
+  - Each category's attributes are validated by a Pydantic schema in `app/schemas/attributes/<category>.py`.
+  - Example for job: `level`, `skills[]`, `remote`, `salary_negotiable`, `employment_type`.
+  - Example for vehicle: `brand`, `model`, `year`, `mileage_km`.
+- **Strings, not DB enums.**
+  - `sources.type` and `posts.category` are unconstrained strings (N4).
+  - Statuses use CHECK constraints generated from Python `StrEnum`s.
+- **Search columns.** `search_vector` is generated from `f_unaccent(title)` (weight A), `company` (B) and `body` (C) with the `simple` config, and backed by a GIN index. There is also a trigram GIN index on `f_unaccent(title)`, plus GIN on `attributes` and a btree on `(category, posted_at DESC)`.
+- **`f_unaccent(text)`.** This is an IMMUTABLE wrapper around `unaccent`, required for generated columns and indexes. Always use it; never call `unaccent()` directly.
+
+### Planned migration (step 3)
+
+- Add `queued` to the `crawl_runs.status` check constraint.
+- Add `crawl_runs.trigger` and `crawl_runs.raw_dir`.
+- Add `sources.consecutive_failures`.
+- Add `posts.last_seen_at`.
+- Create the `worker_heartbeat` table.
+
+---
+
+## 6. Key flows
+
+### 6.1 Scheduled crawl
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as Scheduler
+    participant R as CrawlRunner
+    participant DB as Postgres
+    participant C as Crawler plugin
+    participant X as Source site
+    participant FS as data/raw
+    participant P as Pipeline
+
+    S->>R: run(source_id) (interval ± jitter)
+    R->>DB: pg_try_advisory_lock(source_id)
+    alt lock busy
+        R-->>S: skip
+    end
+    R->>DB: INSERT crawl_runs (running, trigger=schedule)
+    loop pages (rate-limited)
+        C->>X: GET page / browser navigate
+        X-->>C: HTML / JSON
+        C->>FS: save page + manifest
+        C->>C: parse(page) → RawPost[]
+    end
+    R->>P: RawPost[]
+    P->>DB: upsert posts, set duplicate_of_id
+    R->>DB: UPDATE crawl_runs (success, counters)
+    R->>DB: UPDATE sources (status=ok, last_run_at, consecutive_failures=0)
+    R->>DB: pg_advisory_unlock(source_id)
+```
+
+### 6.2 Manual "Run now"
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Frontend
+    participant A as API
+    participant DB as Postgres
+    participant W as Worker (poller)
+
+    UI->>A: POST /sources/{id}/run
+    A->>DB: INSERT crawl_runs (queued, trigger=manual)<br/>unless one is already queued/running
+    A-->>UI: 202 {run_id}
+    loop every 15 s
+        W->>DB: SELECT … WHERE status='queued' FOR UPDATE SKIP LOCKED
+    end
+    W->>W: CrawlRunner (same as 6.1, reusing the row)
+    loop every 3 s while queued/running
+        UI->>A: GET /runs?source_id={id}&limit=1
+    end
+```
+
+### 6.3 Login or checkpoint detected
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Browser crawler
+    participant R as CrawlRunner
+    participant DB as Postgres
+
+    C->>C: navigate, detect /login, /checkpoint, /authwall or captcha
+    C-->>R: raise NeedsLogin
+    R->>DB: crawl_runs.status = needs_login
+    R->>DB: sources.status = needs_login
+    Note over R,DB: No retry. Scheduler skips sources in needs_login<br/>until the manual login CLI resets them to idle.
+```
+
+### 6.4 Manual login (on the host machine)
+
+1. Run `python -m app.crawlers.login linkedin`. This opens a **headed** Chromium; you log in and pass 2FA yourself.
+2. The CLI saves Playwright `storage_state` (cookies + localStorage) to `data/sessions/linkedin.json` with mode `0600`.
+3. The CLI resets the source to `status='idle'`.
+4. The worker container loads the same JSON into a fresh browser context.
+
+**Why `storage_state` instead of a persistent Chromium profile:** a profile directory is tied to the Chromium build and OS, so it does not move between the host (headed login) and the container (headless crawl). A JSON session does.
+
+### 6.5 Search
+
+1. `GET /posts?q=lap trinh&location=hanoi&sort=relevance`
+2. `search_vector @@ plainto_tsquery('simple', f_unaccent(:q))`, plus filters on `category`, `source.type`, `location`, `attributes @> {...}`, salary and `posted_at`.
+3. By default the feed excludes `is_hidden`, duplicates (`duplicate_of_id IS NOT NULL`) and stale posts.
+4. Results are ordered by `ts_rank` or `posted_at DESC`, with keyset pagination.
+
+### 6.6 Re-parse
+
+`python -m app.crawlers reparse <run_id>` reads `raw_dir`, calls `parse` and then runs the pipeline. The upsert makes it idempotent. Use it after fixing a parser bug.
+
+---
+
+## 7. Pipeline
+
+| Stage | Input → Output | Rules |
+|-------|----------------|-------|
+| **language** | text → `vi` / `en` / null | lingua restricted to {Vietnamese, English}; null if the text is under 20 characters. |
+| **normalize** | raw strings → typed fields | See below. |
+| **classify** | post → `category` | Source default (job sources → `job`). Mixed Facebook groups: drop posts that are not hiring posts, using keywords such as `tuyển`, `tuyen dung`, `hiring`, `JD`, `we are looking`. |
+| **validate** | `attributes` → validated dict | Pydantic schema per category; unknown keys are dropped, and invalid posts are logged and skipped. |
+| **dedup + upsert** | post → DB row | See below. |
+
+### Normalization (bilingual)
+
+All matching runs on lower-cased, unaccented text. The alias dictionaries live in `app/pipeline/data/*.yaml`.
+
+- **Salary:**
+  - `15–25 triệu`, `15-25tr`, `15 - 25 million VND` → 15,000,000–25,000,000 VND
+  - `up to $2,000`, `tới 2000 USD` → max = 2000 USD
+  - `1.500–2.000 USD` → 1500–2000 USD (`.` is the Vietnamese thousands separator)
+  - `thỏa thuận`, `negotiable`, `cạnh tranh`, `competitive` → min/max null and `attributes.salary_negotiable = true`
+  - The original currency is kept. Salary filters in USD convert VND at query time using the `USD_VND_RATE` setting.
+- **Location:**
+  - `Hà Nội | Hanoi | HN | Ha Noi` → `hanoi`
+  - `TP.HCM | Hồ Chí Minh | HCMC | Saigon` → `hcmc`
+  - `Đà Nẵng | Da Nang` → `danang`
+  - `remote | từ xa` → `remote`
+- **Level:**
+  - `intern | thực tập` → `intern`
+  - `fresher` → `fresher`
+  - `junior` → `junior`
+  - `middle | mid` → `mid`
+  - `senior | sr` → `senior`
+  - `lead | trưởng nhóm | team lead` → `lead`
+  - `manager | quản lý` → `manager`
+- **Skills:** matched against a dictionary (`python`, `react`, `java`, `golang|go`, `nodejs|node.js`, ...) using word boundaries.
+
+### Dedup
+
+1. **Within a source:** upsert on `(source_id, external_id)`.
+   - A new post is inserted.
+   - An existing post gets its content and `last_seen_at` refreshed. `is_saved` and `is_hidden` are kept.
+   - `external_id` is the site's own ID, or `sha1(canonical_url)` when the site has none.
+2. **Across sources:**
+   - `content_hash = sha256(norm(title) + "|" + norm(company))`.
+   - Facebook posts have no company, so they use `sha256(norm(body)[:300])`.
+   - If another source holds a post with the same hash from the last 30 days, set `duplicate_of_id` to the oldest such post.
+   - The API returns the canonical post with `also_on: ["linkedin", ...]`.
+
+---
+
+## 8. API
+
+Base URL: `/`. JSON only. Errors use `{"detail": ...}`.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/health` | API liveness. |
+| GET | `/health/worker` | 200 if the worker heartbeat is newer than 2 min, else 503. |
+| GET | `/posts` | Feed and search (parameters below). |
+| GET | `/posts/{id}` | Post detail, including duplicates. |
+| PATCH | `/posts/{id}` | `{is_saved?, is_hidden?}` |
+| GET | `/sources` | Sources with status and the last run. |
+| PATCH | `/sources/{id}` | `{enabled?, interval_minutes?, config?}` |
+| POST | `/sources/{id}/run` | Enqueue a manual run → `202 {run_id}`; `409` if one is already queued or running. |
+| GET | `/runs` | `?source_id=&limit=`: recent crawl runs. |
+| GET | `/stats` | Counts per source and category, new posts in the last 24 h. |
+| GET | `/meta/categories` | Categories with a **filter schema** derived from their Pydantic attribute schemas (field, type, enum values, label). |
+
+### `GET /posts` parameters
+
+- **Search and filters:**
+  - `q`
+  - `category` (default `job`)
+  - `source_type[]`
+  - `location[]`
+  - `level[]`
+  - `language`
+  - `salary_min_usd`
+  - `since`: `24h`, `7d` or `30d`
+  - `saved`
+  - `include_hidden`, `include_duplicates`, `include_stale`
+- **Sorting and paging:**
+  - `sort`: `relevance` (the default when `q` is set) or `newest`
+  - `cursor`: opaque, base64 of `(sort_key, id)`
+  - `limit`: maximum 50, default 20
+- **Response:**
+
+```json
+{
+  "items": [
+    {
+      "id": 123, "title": "...", "company": "...", "url": "...",
+      "source": {"type": "itviec", "name": "ITviec - IT jobs"},
+      "category": "job", "language": "vi", "location": "hanoi",
+      "price_min": 2000, "price_max": 3000, "currency": "USD",
+      "attributes": {"level": "senior", "skills": ["python"]},
+      "posted_at": "2026-11-16T08:00:00Z", "is_saved": false,
+      "also_on": ["linkedin"], "snippet": "..."
+    }
+  ],
+  "next_cursor": "eyJ..."
+}
+```
+
+---
+
+## 9. Frontend
+
+- **Routes:**
+  - `/`: feed with category tabs, search bar, filter sidebar and infinite scroll.
+  - `/posts/[id]`: post detail with a link to the original.
+  - `/admin/sources`: source table with status badges, last run, toggles and "Run now".
+- **Filter state lives in the URL** (search params). Feeds can be bookmarked, and the back button works. React Query uses the search params as the query key.
+- **Dynamic filters:** `/meta/categories` drives the tabs and the sidebar. A new category appears without frontend changes, except optional custom rendering.
+- **Rendering:** the layout uses server components; feed, filters and admin are client components (React Query, `useInfiniteQuery`).
+- **Configuration:** `NEXT_PUBLIC_API_URL`.
+- **Display:** UI labels are in English and post content is shown unchanged. Relative times look like "2h ago", and salaries like "15–25M VND" or "$2,000–3,000".
+
+---
+
+## 10. Extensibility
+
+**Add a source:**
+1. Create `app/crawlers/<name>.py` subclassing `BaseCrawler` (`type`, `fetcher`, `fetch`, `parse`).
+2. Register it in `app/crawlers/registry.py`.
+3. Add an entry to `data/seeds/sources.yaml`.
+4. Add HTML fixtures and parser tests in `backend/tests/`.
+5. No migration is needed.
+
+**Add a category:**
+1. Add `app/schemas/attributes/<category>.py` (a Pydantic model; field metadata becomes the filter schema).
+2. Add the value to `Category` in `app/models/post.py`.
+3. Add normalizer dictionaries or classifier keywords if needed.
+4. No migration and no frontend change are needed; the tab and filters come from `/meta/categories`.
+
+---
+
+## 11. Reliability and anti-blocking
+
+| Concern | Policy |
+|---------|--------|
+| ITviec rate | 1 request every 2–4 s (random), realistic desktop User-Agent, up to 3 retries with exponential backoff on 5xx or timeout. |
+| LinkedIn/Facebook rate | At most 50 posts per run, 3–8 s random delay between actions, human-like scrolling. Minimum interval 180 min, at most 3 runs per day per source. |
+| Login wall / checkpoint | Stop immediately, set `needs_login`, **never retry** (flow 6.3). |
+| Consecutive failures | The effective interval is `interval × 2^failures`, capped at ×8. After 5 failures, `status=error`; the source keeps running at the capped interval. |
+| Partial failures | One bad page or post is logged and skipped; the run still succeeds. |
+| Selector drift | If pages were fetched but 0 posts were parsed, the run is `failed` with the error `"selector drift: 0 posts parsed from N pages"`. |
+| Concurrency | Per-source advisory lock, and a single browser semaphore. |
+| Worker crash | Rows left `running` for more than 1 h are marked `failed` when the worker starts. |
+
+---
+
+## 12. Deployment
+
+```mermaid
+flowchart LR
+    subgraph vps["Laptop or VPS"]
+        caddy["Caddy<br/>HTTPS + basic auth<br/><i>VPS only</i>"]
+        fe[frontend :3000]
+        api[api :8000]
+        wk[worker]
+        pg[(postgres :5432)]
+        data[/./data/]
+    end
+    user([User]) --> caddy --> fe & api
+    api --> pg
+    wk --> pg
+    api -- ro --> data
+    wk -- rw --> data
+```
+
+- **Compose services:** `postgres`, `api` (currently named `backend`), `worker`, `frontend`.
+  - `api` runs `alembic upgrade head` and `app.seed` on start.
+  - `worker` waits for `api` to be healthy and never migrates.
+- **Local:** Postgres is exposed on host port 5433 for development. Login sessions are created on the host and picked up by the worker through the `./data` mount. The Playwright versions on the host and in the worker image must match.
+- **VPS:**
+  - Only Caddy is published.
+  - `api` and `postgres` stay on the internal network.
+  - Basic auth protects the whole site, because there are no accounts but the admin endpoints can trigger crawls.
+- **Backups:** the worker runs a daily `pg_dump` into `data/backups/` and keeps 7 copies (the folder is gitignored).
+
+---
+
+## 13. Security and privacy
+
+- **Session files are account credentials.**
+  - They live in `data/sessions/*.json`, which is gitignored, with mode `0600`.
+  - The `api` container never needs them.
+  - Cookies are never logged.
+- **Use a secondary account** for LinkedIn and Facebook.
+- **No data leaves the system.**
+  - Scraped content is only shown to the owner.
+  - There is no public API and no re-publishing.
+- **Network:**
+  - CORS allows only the frontend origin.
+  - On a VPS, everything sits behind basic auth (section 12).
+
+---
+
+## 14. Observability
+
+- **Logs:** structured JSON lines with `source`, `run_id`, `event`, `duration_ms`. Logs never include cookies or full page bodies.
+- **Crawl monitoring:** the `crawl_runs` table, surfaced on `/admin/sources`, is the primary tool.
+- **Worker liveness:** the worker upserts `worker_heartbeat` every 30 s, and `/health/worker` exposes it.
+- *(planned)* A Telegram alert fires when a source moves to `needs_login` or `error`.
+
+---
+
+## 15. Data lifecycle
+
+| Data | Retention |
+|------|-----------|
+| `data/raw/` | 30 days; deleted by the daily housekeeping job. |
+| Job posts | Hidden from the default feed when `last_seen_at` is more than 30 days old (Facebook: `posted_at` more than 30 days old). Never deleted automatically. |
+| Saved posts | Kept forever. |
+| `crawl_runs` | 90 days. |
+| Backups | 7 daily dumps. |
+
+---
+
+## 16. Capacity estimates
+
+| Item | Estimate |
+|------|----------|
+| New posts | ~1,000/day |
+| Raw storage | ~5 KB/post → ~5 MB/day → ~150 MB with 30-day retention |
+| Database | ~300 MB/year including indexes |
+| Search latency | < 50 ms for < 1M rows with GIN indexes |
+| Memory | Postgres ~200 MB, API ~100 MB, worker ~500 MB with the browser open, Next.js ~150 MB → fits in 2 GB |
+
+---
+
+## 17. Architecture decisions
+
+| Decision | Rationale | Rejected alternative |
+|----------|-----------|----------------------|
+| Python + FastAPI backend | Best crawling ecosystem (httpx, selectolax, Playwright); typed API with Pydantic. | Node/NestJS |
+| PostgreSQL full-text + `unaccent` + `pg_trgm` | One datastore; handles accent-insensitive Vietnamese search at this scale. | Elasticsearch/Meilisearch (extra service) |
+| `simple` text search config | Mixed VI/EN content; stemming for one language hurts the other. | `english` config |
+| Generic `posts` + JSONB `attributes` | New categories without migrations (N4). | One table per category |
+| Postgres as the job queue | Already present; `SKIP LOCKED` and advisory locks are enough for a single user. | Redis + Celery/RQ |
+| Separate `worker` process | Isolates heavy, crash-prone browsers from the API. | Crawling inside API background tasks |
+| Playwright `storage_state` JSON | Portable between host (headed login) and container (headless). | Persistent Chromium profile |
+| Raw pages persisted to disk | Re-parse after parser fixes without re-crawling (protects accounts). | Parse-and-discard |
+| REST + React Query, filters in URL | Simple, cacheable, bookmarkable. | GraphQL |
+
+---
+
+## 18. Risks
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| LinkedIn/Facebook ToS violation; account restriction or ban | Source lost | Secondary account, low rates, stop on checkpoint, no retry loops. |
+| Site layout changes break selectors | Silent data loss | Selector-drift detection, fixture tests, raw pages for re-parse. |
+| Facebook limits group content for automated sessions | Fewer posts | Prefer `m.facebook.com`/`mbasic`, keep volume low; accept partial coverage. |
+| Salary/location mis-parsing on free text | Wrong filters | Conservative parsing (leave null when unsure), table-driven tests with real samples. |
+| Fixed USD/VND rate drifts | Slightly wrong salary filter | Configurable `USD_VND_RATE`; only filtering uses it, stored values keep the original currency. |
+| Duplicates not detected (different titles) | Noise in feed | Phase 2: trigram similarity on titles within 14 days as a third dedup layer. |

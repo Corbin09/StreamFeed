@@ -54,28 +54,19 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
   - Query pattern: `search_vector @@ plainto_tsquery('simple', f_unaccent(:q))`.
 - `posts.price_min/price_max/currency` hold the salary for jobs and the asking price for listings. `duplicate_of_id` links a cross-source duplicate to the canonical post.
 
-### Planned design (follow it when adding features)
+### Target design
+
+The full design is in **`docs/ARCHITECTURE.md`**: containers, components, data model, flows, pipeline rules, API, reliability policies and ADRs. Read the relevant section before building a step, and update the doc whenever the design changes.
 
 Data flow:
 
 ```
-crawlers → normalize/dedup/classify pipeline → Postgres → FastAPI → Next.js
+worker (scheduler → crawlers → pipeline) → Postgres ← api (FastAPI) ← frontend (Next.js)
 ```
 
-- **Generic `posts` table** for every category. It has a `category` column (`job`, `vehicle`, ...) and an `attributes` JSONB column for category-specific fields, validated by per-category Pydantic schemas in `app/schemas/attributes/`. A new category should need only a new schema, not a table migration. The other tables are `sources` (per-source config JSONB, status, interval) and `crawl_runs`.
-- **Crawlers are plugins** in `app/crawlers/`:
-  - Each one subclasses `BaseCrawler` and implements `fetch()` → raw and `parse(raw)` → `RawPost`.
-  - Crawlers are registered in `registry.py`.
-  - Each fetch saves its raw HTML/JSON to `data/raw/<source>/<date>/`, so parsers can be re-run without re-crawling.
-- **Tools per source:**
-  - ITviec uses httpx + selectolax.
-  - LinkedIn and Facebook use Playwright persistent profiles under `data/browser_profiles/` (gitignored, never commit). These profiles are created by a manual headed login CLI.
-  - On a login or checkpoint page, the crawler must mark the source `needs_login` and stop. Never retry in a loop.
-  - Keep rate limits low, with random delays.
-- **Dedup** runs in two layers: `source + external_id` first, then `content_hash` (normalized title + company) to merge the same post across sources.
-- **Search:**
-  - Uses Postgres full-text with the `simple` config + `unaccent` + `pg_trgm`. Do not use language-specific stemming.
-  - Each post stores a `language` field (`vi`/`en`), detected with lingua.
-  - Locations and levels are stored as canonical English keys (e.g. `hanoi`).
-- **Scheduler:** APScheduler worker, default 120-minute interval per source, with jitter.
-- **Frontend:** Next.js + Tailwind + React Query. Category tabs switch the feed; the filter sidebar is generated from the active category's attribute schema; `/admin/sources` shows crawl status.
+Rules that are easy to get wrong:
+- **The `api` process never crawls.** Crawling runs in a separate `worker` process. "Run now" inserts a `crawl_runs` row with `status='queued'`; the worker claims it with `FOR UPDATE SKIP LOCKED`. Each source has a per-source `pg_try_advisory_lock`, and only one browser runs at a time.
+- **`BaseCrawler.parse()` must be pure** (no network, no DB). Every fetched page is saved under `data/raw/` first, so runs can be re-parsed and parsers are tested against HTML fixtures.
+- **On a login, checkpoint or captcha page, stop at once and set `needs_login`. Never retry.**
+- **Login sessions are Playwright `storage_state` JSON files** in `data/sessions/` (gitignored, mode 0600), not persistent profiles. They are created on the host with a headed login CLI.
+- **Normalization matches on unaccented, lower-cased text** and stores canonical English keys (`hanoi`, `senior`). The original currency is kept.

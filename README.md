@@ -7,6 +7,8 @@ A personal aggregator that collects posts from multiple sources into one searcha
 
 Post content may be in Vietnamese or English; it is stored as-is and searchable with or without diacritics.
 
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full system design.
+
 ## Stack
 
 | Layer    | Technology                                    |
