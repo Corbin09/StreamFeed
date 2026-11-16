@@ -7,7 +7,9 @@ import importlib
 from app.crawlers.base import BaseCrawler
 
 # Modules that define built-in crawlers; importing them registers the plugins.
-BUILTIN_MODULES: list[str] = []
+BUILTIN_MODULES: list[str] = [
+    "app.crawlers.itviec",
+]
 
 
 class UnknownSourceType(LookupError):

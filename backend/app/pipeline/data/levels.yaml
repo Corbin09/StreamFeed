@@ -1,0 +1,10 @@
+# Seniority levels, ordered from junior to senior. Matched in post titles only
+# (bodies mention many levels, e.g. "report to the Senior Manager").
+levels:
+  intern: [intern, internship, thuc tap, thuc tap sinh, tts]
+  fresher: [fresher, fresh graduate, new graduate, moi tot nghiep, moi ra truong]
+  junior: [junior, jr]
+  mid: [middle, mid, mid level, intermediate]
+  senior: [senior, sr]
+  lead: [lead, leader, team lead, tech lead, technical lead, principal, truong nhom]
+  manager: [manager, head of, director, quan ly, truong phong, giam doc]

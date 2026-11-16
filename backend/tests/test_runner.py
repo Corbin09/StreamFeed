@@ -144,8 +144,8 @@ def test_rerun_updates_and_keeps_user_flags(make_runner, session_factory, source
 
 def test_duplicate_external_ids_in_one_run(make_runner, session_factory, source_id) -> None:
     result = make_runner(make_crawler([page((1, "A")), page((1, "A again"))])).run(source_id)
-    assert (result.status, result.fetched, result.inserted) == ("success", 2, 1)
-    assert titles(session_factory) == ["A again"]
+    assert (result.status, result.fetched, result.inserted) == ("success", 1, 1)
+    assert titles(session_factory) == ["A"]  # first non-empty value wins (merge_raw_posts)
 
 
 def test_needs_login_stops_and_flags_source(make_runner, session_factory, source_id) -> None:

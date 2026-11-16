@@ -1,0 +1,16 @@
+# Canonical location key -> aliases. Matching runs on folded text
+# (lower-case, diacritics removed, đ -> d), so list aliases without accents.
+locations:
+  hanoi: [ha noi, hanoi, tp ha noi, thanh pho ha noi]
+  hcmc: [ho chi minh, hcm, hcmc, tp hcm, tphcm, tp.hcm, sai gon, saigon, thu duc]
+  danang: [da nang, danang]
+  haiphong: [hai phong, haiphong]
+  cantho: [can tho, cantho]
+  hue: [hue, thua thien hue]
+  nhatrang: [nha trang, khanh hoa]
+  binhduong: [binh duong]
+  dongnai: [dong nai, bien hoa]
+  bacninh: [bac ninh]
+  quynhon: [quy nhon, binh dinh]
+  remote: [remote, fully remote, lam tu xa, work from home, wfh]
+  overseas: [overseas, nuoc ngoai, japan, nhat ban, singapore]

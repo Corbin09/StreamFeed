@@ -6,8 +6,11 @@ sources:
     enabled: true
     interval_minutes: 120
     config:
-      keywords: []          # e.g. ["python", "react"]; empty = all IT jobs
-      locations: []         # e.g. ["ha-noi", "ho-chi-minh-hcm"]
+      keywords: []          # e.g. ["python", "react"] -> /it-jobs/python; empty = all IT jobs
+      locations: []         # e.g. ["ha-noi", "ho-chi-minh-hcm"] -> /it-jobs/python/ha-noi
+      pages: 3              # listing pages (20 jobs each) per search path
+      fetch_details: true   # fetch each job's detail page (description, salary)
+      max_posts_per_run: 60
 
   - type: linkedin
     name: LinkedIn - Job search

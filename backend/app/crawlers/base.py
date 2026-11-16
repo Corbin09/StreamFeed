@@ -51,9 +51,13 @@ class RawPost:
     body: str = ""
     company: str | None = None
     author: str | None = None
-    location_raw: str | None = None
+    location_raw: str | None = None  # may list several places, e.g. "Hà Nội; Hồ Chí Minh"
     salary_raw: str | None = None
+    salary_currency_hint: str | None = None  # currency the source labels the salary with
+    work_mode_raw: str | None = None  # e.g. "At office", "Hybrid", "Làm từ xa"
+    tags: list[str] = field(default_factory=list)  # structured skill tags from the source
     posted_at: datetime | None = None
+    # Source-specific values copied into posts.attributes (validated by the category schema).
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -96,7 +100,8 @@ class CrawlContext:
 class BaseCrawler(ABC):
     """A source plugin. Subclasses are registered in `app.crawlers.registry`.
 
-    - `fetch` performs network I/O and yields pages as they arrive.
+    - `fetch` performs network I/O and yields pages as they arrive. It should stop
+      once `ctx.should_stop` is true; the runner also truncates to `ctx.max_posts`.
     - `parse` must be pure (no network, no DB): it is re-run on saved pages by
       `python -m app.crawlers reparse` and tested against HTML fixtures.
     """
@@ -104,6 +109,8 @@ class BaseCrawler(ABC):
     type: ClassVar[str]  # matches sources.type, e.g. "itviec"
     category: ClassVar[str] = Category.JOB
     default_max_posts: ClassVar[int] = 200
+    # True for mixed sources (Facebook groups): non-hiring posts are dropped by the pipeline.
+    filter_non_jobs: ClassVar[bool] = False
 
     def create_fetcher(self) -> Fetcher:
         """Return the fetcher for one run. The runner closes it afterwards."""

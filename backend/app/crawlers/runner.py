@@ -15,7 +15,7 @@ from app.crawlers.raw_store import RawStore
 from app.crawlers.registry import CrawlerRegistry, load_builtin_crawlers
 from app.db import SessionLocal
 from app.models import CrawlRun, CrawlRunStatus, CrawlRunTrigger, Source, SourceStatus
-from app.pipeline.ingest import IngestResult, upsert_posts
+from app.pipeline.ingest import IngestResult, merge_raw_posts, process_posts
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ class RunResult:
     inserted: int = 0
     updated: int = 0
     parse_errors: int = 0
+    skipped: int = 0  # dropped by the pipeline (not a hiring post, invalid attributes)
     error: str | None = None
 
 
@@ -136,12 +137,14 @@ class CrawlRunner:
 
         self._finish(source_id, result)
         log.info(
-            "Crawl finished: %s (pages=%d posts=%d inserted=%d updated=%d parse_errors=%d)%s",
+            "Crawl finished: %s (pages=%d posts=%d inserted=%d updated=%d skipped=%d "
+            "parse_errors=%d)%s",
             result.status,
             result.pages,
             result.fetched,
             result.inserted,
             result.updated,
+            result.skipped,
             result.parse_errors,
             f" error={result.error}" if result.error else "",
         )
@@ -153,6 +156,7 @@ class CrawlRunner:
         max_posts = int(info.config.get("max_posts_per_run", crawler.default_max_posts))
         fetcher = crawler.create_fetcher()
         posts: list[RawPost] = []
+        seen_ids: set[str] = set()
         try:
             ctx = CrawlContext(
                 run_id=result.run_id, source=info, fetcher=fetcher, max_posts=max_posts
@@ -160,15 +164,15 @@ class CrawlRunner:
             for page in crawler.fetch(ctx):
                 writer.save(page)
                 result.pages += 1
-                posts.extend(self._parse_page(crawler, page, result))
-                ctx.posts_seen = len(posts)
-                if ctx.should_stop:
-                    break
+                parsed = self._parse_page(crawler, page, result)
+                posts.extend(parsed)
+                seen_ids.update(p.external_id for p in parsed)
+                ctx.posts_seen = len(seen_ids)
         finally:
             fetcher.close()
-        posts = posts[:max_posts]
-        result.fetched = len(posts)
-        return posts
+        merged = merge_raw_posts(posts)[:max_posts]
+        result.fetched = len(merged)
+        return merged
 
     @staticmethod
     def _parse_page(crawler: BaseCrawler, page: RawPage, result: RunResult) -> list[RawPost]:
@@ -186,9 +190,19 @@ class CrawlRunner:
         with self.session_factory() as session:
             for start in range(0, len(posts), INGEST_BATCH_SIZE):
                 batch = posts[start : start + INGEST_BATCH_SIZE]
-                total += upsert_posts(session, info.id, crawler.category, batch)
+                total += process_posts(
+                    session,
+                    info.id,
+                    crawler.category,
+                    batch,
+                    filter_non_jobs=crawler.filter_non_jobs,
+                )
                 session.commit()
-        result.inserted, result.updated = total.inserted, total.updated
+        result.inserted, result.updated, result.skipped = (
+            total.inserted,
+            total.updated,
+            total.skipped,
+        )
 
     def _finish(self, source_id: int, result: RunResult) -> None:
         with self.session_factory() as session:
@@ -237,6 +251,7 @@ class CrawlRunner:
             for page in self.raw_store.load_run(raw_dir):
                 result.pages += 1
                 posts.extend(self._parse_page(crawler, page, result))
+            posts = merge_raw_posts(posts)
             result.fetched = len(posts)
             self._ingest(info, crawler, posts, result)
             return result

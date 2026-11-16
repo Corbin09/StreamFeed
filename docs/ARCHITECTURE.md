@@ -1,6 +1,6 @@
 # StreamFeed — System Architecture
 
-Status: **approved design**. Implemented so far: project scaffold, database schema and crawler framework (steps 1–3). Items marked *(planned)* are not built yet.
+Status: **approved design**. Implemented so far: project scaffold, database schema, crawler framework, the bilingual pipeline and the ITviec crawler (steps 1–4). Items marked *(planned)* are not built yet.
 
 ![StreamFeed system overview](diagrams/streamfeed-overview.png)
 
@@ -150,7 +150,7 @@ class BaseCrawler(ABC):
 ```
 
 - `RawPage` holds `url`, `fetched_at`, `content_type` and `body`.
-- `RawPost` holds the source-level fields: `external_id`, `url`, `title`, `body`, `company`, `author`, raw salary/location strings, `posted_at` and a `extra` dict.
+- `RawPost` holds the source-level fields: `external_id`, `url`, `title`, `body`, `company`, `author`, `location_raw`, `salary_raw` (+ `salary_currency_hint`), `work_mode_raw`, structured skill `tags`, `posted_at`, and an `extra` dict that is copied into `attributes`.
 - `parse` must stay pure, with no network or DB access. That keeps crawlers testable with HTML fixtures and lets raw pages be re-parsed later.
 - `registry.py` maps `type` to the crawler class. `sources.type` selects the plugin, and `sources.config` (JSONB) holds per-source parameters such as keywords, group URLs and `max_posts_per_run`.
 
@@ -168,6 +168,14 @@ class BaseCrawler(ABC):
 
 - Layout: `data/raw/<source_type>/<YYYY-MM-DD>/<run_id>/<n>.html|json`, plus `manifest.json` with the url, fetched_at and content type of each file.
 - `crawl_runs.raw_dir` points to the run's folder. `python -m app.crawlers reparse <run_id>` replays the run without touching the network.
+
+### Source plugins
+
+| Plugin | Status | How it works |
+|--------|--------|--------------|
+| `itviec` | built | Listing pages `/it-jobs[/<keyword>][/<location>]?page=N` (20 cards each) until `max_posts_per_run` slugs are collected, then one detail page per job. Cards give title, company, the precise "posted N minutes ago" time, work mode and skill tags. The detail page's JSON-LD `JobPosting` gives description, benefits, salary text, address and expiry. `external_id` is the job slug. Salaries are often hidden ("You'll love it"). |
+| `linkedin` | planned (step 8) | Playwright with a `storage_state` session. |
+| `facebook` | planned (step 9) | Playwright with a `storage_state` session, `filter_non_jobs = True`. |
 
 ---
 
@@ -239,7 +247,7 @@ erDiagram
 
 - **Generic posts.** Every category lives in `posts`, and category-specific fields go in `attributes`.
   - Each category's attributes are validated by a Pydantic schema in `app/schemas/attributes/<category>.py`.
-  - Example for job: `level`, `skills[]`, `remote`, `salary_negotiable`, `employment_type`.
+  - Job (`app/schemas/attributes/job.py`): `levels[]`, `skills[]`, `locations[]`, `work_mode`, `salary_negotiable`, `salary_text`, `employment_type`, `expertise`, `experience_months`, `valid_through`.
   - Example for vehicle: `brand`, `model`, `year`, `mileage_km`.
 - **Strings, not DB enums.**
   - `sources.type` and `posts.category` are unconstrained strings (N4).
@@ -354,6 +362,7 @@ Posts parsed earlier in the interrupted run are not ingested. Their pages are al
 
 | Stage | Input → Output | Rules |
 |-------|----------------|-------|
+| **merge** | RawPosts → one per `external_id` | A source may emit the same post from several pages (ITviec: listing card + detail page). The first non-empty value of each field wins and later pages only fill gaps, so crawlers yield their most precise page first. |
 | **language** | text → `vi` / `en` / null | lingua restricted to {Vietnamese, English}; null if the text is under 20 characters. |
 | **normalize** | raw strings → typed fields | See below. |
 | **classify** | post → `category` | Source default (job sources → `job`). Mixed Facebook groups: drop posts that are not hiring posts, using keywords such as `tuyển`, `tuyen dung`, `hiring`, `JD`, `we are looking`. |
@@ -368,14 +377,17 @@ All matching runs on lower-cased, unaccented text. The alias dictionaries live i
   - `15–25 triệu`, `15-25tr`, `15 - 25 million VND` → 15,000,000–25,000,000 VND
   - `up to $2,000`, `tới 2000 USD` → max = 2000 USD
   - `1.500–2.000 USD` → 1500–2000 USD (`.` is the Vietnamese thousands separator)
-  - `thỏa thuận`, `negotiable`, `cạnh tranh`, `competitive` → min/max null and `attributes.salary_negotiable = true`
+  - `Up To 35M Gross` → max = 35,000,000 VND. Values ≥ 100,000 are always VND, even when the source labels them USD (ITviec does).
+  - `thỏa thuận`, `negotiable`, `cạnh tranh`, `competitive`, `You'll love it` → min/max null and `attributes.salary_negotiable = true`
+  - The text as written is kept in `attributes.salary_text`.
   - The original currency is kept. Salary filters in USD convert VND at query time using the `USD_VND_RATE` setting.
 - **Location:**
-  - `Hà Nội | Hanoi | HN | Ha Noi` → `hanoi`
-  - `TP.HCM | Hồ Chí Minh | HCMC | Saigon` → `hcmc`
+  - `Hà Nội | Hanoi | Ha Noi` → `hanoi`
+  - `TP.HCM | Hồ Chí Minh | HCMC | Saigon | Thủ Đức` → `hcmc`
   - `Đà Nẵng | Da Nang` → `danang`
-  - `remote | từ xa` → `remote`
-- **Level:**
+  - `remote | làm từ xa`, or work mode `remote` → `remote`
+  - Every matched location goes into `attributes.locations`. The first one becomes `posts.location`.
+- **Level** (matched in titles only; every level found is kept, e.g. `Middle/Senior` → `[mid, senior]`):
   - `intern | thực tập` → `intern`
   - `fresher` → `fresher`
   - `junior` → `junior`
@@ -383,7 +395,10 @@ All matching runs on lower-cased, unaccented text. The alias dictionaries live i
   - `senior | sr` → `senior`
   - `lead | trưởng nhóm | team lead` → `lead`
   - `manager | quản lý` → `manager`
-- **Skills:** matched against a dictionary (`python`, `react`, `java`, `golang|go`, `nodejs|node.js`, ...) using word boundaries.
+- **Skills:**
+  - Structured tags from the source (ITviec) are mapped through `skills.yaml` aliases, e.g. `C language` → `c`, `HTML5` → `html`, `Golang` → `go`. Unknown tags are kept as slugs.
+  - Free text (Facebook) is matched against the dictionary with word boundaries. Ambiguous aliases (`go`, `c`, `ai`, `ba`, ...) are listed under `tag_only` and are not matched in free text.
+- **Work mode:** `At office | tại văn phòng` → `onsite`; `Hybrid | linh hoạt` → `hybrid`; `Remote | làm từ xa` → `remote`.
 
 ### Dedup
 
@@ -444,7 +459,7 @@ Base URL: `/`. JSON only. Errors use `{"detail": ...}`.
       "source": {"type": "itviec", "name": "ITviec - IT jobs"},
       "category": "job", "language": "vi", "location": "hanoi",
       "price_min": 2000, "price_max": 3000, "currency": "USD",
-      "attributes": {"level": "senior", "skills": ["python"]},
+      "attributes": {"levels": ["senior"], "skills": ["python"]},
       "posted_at": "2026-11-16T08:00:00Z", "is_saved": false,
       "also_on": ["linkedin"], "snippet": "..."
     }

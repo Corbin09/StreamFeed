@@ -64,7 +64,19 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
     - It takes an advisory lock on `(7301, source_id)` and creates or claims the `crawl_runs` row.
     - It saves every page to the raw store before parsing it. A failing page counts as a parse error and is skipped.
     - It sets the outcome (success / failed / needs_login / selector drift) and updates `consecutive_failures` (status `error` after 5).
-- `app/pipeline/ingest.py`: `upsert_posts` upserts on `(source_id, external_id)`. It refreshes `last_seen_at` and never touches `is_saved`/`is_hidden`. Normalization and cross-source dedup are not built yet (step 4).
+- **Pipeline** (`backend/app/pipeline/`): `ingest.process_posts` runs these steps (see ARCHITECTURE.md §7):
+  1. `merge_raw_posts`: the first non-empty value wins, so crawlers must yield their most precise page first.
+  2. Filter out non-hiring posts when `filter_non_jobs` is set.
+  3. `build_row` normalizes the post:
+     - `language` (lingua, VI/EN);
+     - `salary` (VI/EN amounts and units; values ≥ 100k are VND);
+     - `normalize` (locations, levels from the title, skills, work mode).
+  4. Validate the attributes against `app/schemas/attributes/<category>.py`.
+  5. Upsert on `(source_id, external_id)`, preserving `is_saved`/`is_hidden`.
+  6. `dedup.link_duplicates` (same `content_hash`, other source, oldest wins, 30-day window).
+
+  The alias dictionaries are `app/pipeline/data/*.yaml`. Fix a mapping there, then run `reparse <run_id>` to re-apply it without crawling.
+- **ITviec plugin** (`app/crawlers/itviec.py`): fetches listing cards, then detail pages (JSON-LD `JobPosting`); `external_id` is the job slug. Parser tests use trimmed real pages in `tests/fixtures/itviec/`. When ITviec changes its markup, save a fresh page there and update the fixtures.
 - **Test helpers:** use the `session_factory` fixture (real commits, tables truncated afterwards) for code that manages its own sessions. Fake crawlers are registered on a local `CrawlerRegistry` (see `tests/test_runner.py`).
 - `posts.price_min/price_max/currency` hold the salary for jobs and the asking price for listings. `duplicate_of_id` links a cross-source duplicate to the canonical post.
 
