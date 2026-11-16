@@ -90,6 +90,10 @@ class Post(Base):
 
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     crawled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Refreshed every time a crawl sees the post again; used to detect expired posts.
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

@@ -18,8 +18,8 @@ out/
 # Data (crawled content and browser sessions must never be committed)
 data/raw/*
 !data/raw/.gitkeep
-data/browser_profiles/*
-!data/browser_profiles/.gitkeep
+data/sessions/*
+!data/sessions/.gitkeep
 data/exports/*
 !data/exports/.gitkeep
 

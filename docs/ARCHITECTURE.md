@@ -1,6 +1,6 @@
 # StreamFeed — System Architecture
 
-Status: **approved design**. Implemented so far: project scaffold and database schema (steps 1–2). Items marked *(planned)* are not built yet.
+Status: **approved design**. Implemented so far: project scaffold, database schema and crawler framework (steps 1–3). Items marked *(planned)* are not built yet.
 
 ![StreamFeed system overview](diagrams/streamfeed-overview.png)
 
@@ -134,11 +134,15 @@ flowchart LR
 ```python
 class BaseCrawler(ABC):
     type: ClassVar[str]                 # "itviec", matches sources.type
-    fetcher: ClassVar[type[Fetcher]]    # HttpFetcher | BrowserFetcher
+    category: ClassVar[str] = "job"
+    default_max_posts: ClassVar[int] = 200
+
+    def create_fetcher(self) -> Fetcher: ...  # default HttpFetcher; browser crawlers override
 
     @abstractmethod
     def fetch(self, ctx: CrawlContext) -> Iterator[RawPage]: ...
-    #   ctx = source config, run id, fetcher, limits; yields pages as they are fetched
+    #   ctx = source snapshot + config, run id, fetcher, max_posts;
+    #   yields pages as they are fetched and checks ctx.should_stop between pages
 
     @abstractmethod
     def parse(self, page: RawPage) -> list[RawPost]: ...
@@ -183,7 +187,7 @@ erDiagram
         bool enabled
         int interval_minutes
         string status "idle | ok | needs_login | error"
-        int consecutive_failures "(planned)"
+        int consecutive_failures
         timestamptz last_run_at
         text last_error
     }
@@ -209,15 +213,15 @@ erDiagram
         bool is_hidden
         timestamptz posted_at
         timestamptz crawled_at
-        timestamptz last_seen_at "(planned)"
+        timestamptz last_seen_at
         tsvector search_vector "generated"
     }
     crawl_runs {
         bigint id PK
         int source_id FK
-        string status "queued(planned) | running | success | failed | needs_login"
-        string trigger "(planned) schedule | manual"
-        text raw_dir "(planned)"
+        string status "queued | running | success | failed | needs_login"
+        string trigger "schedule | manual"
+        text raw_dir "relative to data dir"
         int fetched
         int inserted
         int updated
@@ -226,7 +230,7 @@ erDiagram
         timestamptz finished_at
     }
     worker_heartbeat {
-        string worker_id PK "(planned)"
+        string worker_id PK
         timestamptz beat_at
     }
 ```
@@ -243,13 +247,10 @@ erDiagram
 - **Search columns.** `search_vector` is generated from `f_unaccent(title)` (weight A), `company` (B) and `body` (C) with the `simple` config, and backed by a GIN index. There is also a trigram GIN index on `f_unaccent(title)`, plus GIN on `attributes` and a btree on `(category, posted_at DESC)`.
 - **`f_unaccent(text)`.** This is an IMMUTABLE wrapper around `unaccent`, required for generated columns and indexes. Always use it; never call `unaccent()` directly.
 
-### Planned migration (step 3)
+### Migrations
 
-- Add `queued` to the `crawl_runs.status` check constraint.
-- Add `crawl_runs.trigger` and `crawl_runs.raw_dir`.
-- Add `sources.consecutive_failures`.
-- Add `posts.last_seen_at`.
-- Create the `worker_heartbeat` table.
+- `ef6adc1dac6e` initial schema: tables, extensions, `f_unaccent`, search indexes.
+- `b1295f6e9bcb` (step 3): adds `queued` status, `trigger`, `raw_dir`, `consecutive_failures`, `last_seen_at`, the `worker_heartbeat` table, and a partial index on queued runs.
 
 ---
 
@@ -324,6 +325,8 @@ sequenceDiagram
     R->>DB: sources.status = needs_login
     Note over R,DB: No retry. Scheduler skips sources in needs_login<br/>until the manual login CLI resets them to idle.
 ```
+
+Posts parsed earlier in the interrupted run are not ingested. Their pages are already in the RawStore, so `reparse <run_id>` can recover them after logging in.
 
 ### 6.4 Manual login (on the host machine)
 

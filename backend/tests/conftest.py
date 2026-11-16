@@ -13,7 +13,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
 from app.config import get_settings
@@ -62,3 +62,17 @@ def session(db_engine: Engine) -> Iterator[Session]:
         finally:
             sess.close()
             trans.rollback()
+
+
+@pytest.fixture
+def session_factory(db_engine: Engine) -> Iterator[sessionmaker[Session]]:
+    """For code that manages its own sessions/commits (e.g. CrawlRunner).
+
+    Data is committed for real, so all tables are truncated afterwards.
+    """
+    factory = sessionmaker(bind=db_engine, expire_on_commit=False)
+    yield factory
+    with db_engine.begin() as conn:
+        conn.execute(
+            text("TRUNCATE posts, crawl_runs, sources, worker_heartbeat RESTART IDENTITY CASCADE")
+        )

@@ -33,6 +33,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/alembic upgrade head                                 # apply migrations
 .venv/bin/alembic revision --autogenerate -m "describe change"  # new migration
 .venv/bin/python -m app.seed                                   # upsert data/seeds/sources.yaml
+.venv/bin/python -m app.crawlers list|run <source>|reparse <run_id>  # crawler CLI
 ```
 
 DB tests (`tests/test_db.py`) create and migrate a separate `streamfeed_test` database on the same server. Each test runs in a rolled-back transaction, and the tests are skipped if Postgres is down. The backend container runs `alembic upgrade head` and `app.seed` on every start.
@@ -54,6 +55,17 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
   - `posts.search_vector` is a generated column (title A, company B, body C, `simple` config), backed by a GIN index.
   - There is also a trigram GIN index on `f_unaccent(title)`.
   - Query pattern: `search_vector @@ plainto_tsquery('simple', f_unaccent(:q))`.
+- **Crawler framework** (`backend/app/crawlers/`):
+  - `base.py` holds `BaseCrawler`, `RawPage`, `RawPost`, `CrawlContext` and the `NeedsLogin`/`FetchError` exceptions.
+  - `fetchers.py` holds `HttpFetcher`: a random 2–4 s delay between requests, and retries on 429/5xx/transport errors with backoff.
+  - `raw_store.py` writes `data/raw/<type>/<date>/<run_id>/NNNN.html|json` plus a manifest. `crawl_runs.raw_dir` stores this path relative to `DATA_DIR`.
+  - `registry.py` maps `sources.type` to the plugin class. New built-in plugin modules must be added to `BUILTIN_MODULES`.
+  - `runner.py` (`CrawlRunner`) runs one crawl:
+    - It takes an advisory lock on `(7301, source_id)` and creates or claims the `crawl_runs` row.
+    - It saves every page to the raw store before parsing it. A failing page counts as a parse error and is skipped.
+    - It sets the outcome (success / failed / needs_login / selector drift) and updates `consecutive_failures` (status `error` after 5).
+- `app/pipeline/ingest.py`: `upsert_posts` upserts on `(source_id, external_id)`. It refreshes `last_seen_at` and never touches `is_saved`/`is_hidden`. Normalization and cross-source dedup are not built yet (step 4).
+- **Test helpers:** use the `session_factory` fixture (real commits, tables truncated afterwards) for code that manages its own sessions. Fake crawlers are registered on a local `CrawlerRegistry` (see `tests/test_runner.py`).
 - `posts.price_min/price_max/currency` hold the salary for jobs and the asking price for listings. `duplicate_of_id` links a cross-source duplicate to the canonical post.
 
 ### Target design

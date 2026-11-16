@@ -25,7 +25,7 @@ backend/    FastAPI app, crawlers, normalization pipeline, scheduler
 frontend/   Next.js UI
 data/
   raw/               raw crawled HTML/JSON (gitignored)
-  browser_profiles/  Playwright login sessions (gitignored, keep private!)
+  sessions/          Playwright login sessions (gitignored, keep private!)
   seeds/             source definitions (sources.yaml)
   exports/           CSV exports (gitignored)
 ```
@@ -70,4 +70,4 @@ The scripts require Node.js 18+. The first run downloads mermaid-cli and Chromiu
 
 ## Notes on LinkedIn / Facebook crawling
 
-These sources are crawled with a logged-in browser session. Use a **secondary account**, keep crawl rates low, and never commit `data/browser_profiles/`. When a login or checkpoint page is detected, the source is paused and marked `needs_login`.
+These sources are crawled with a logged-in browser session. Use a **secondary account**, keep crawl rates low, and never commit `data/sessions/`. When a login or checkpoint page is detected, the source is paused and marked `needs_login`.
