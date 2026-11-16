@@ -27,3 +27,6 @@ data/exports/*
 .DS_Store
 .idea/
 .vscode/
+
+# Mermaid exports from scripts/render-diagrams.sh (generated on demand)
+docs/diagrams/mermaid/

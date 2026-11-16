@@ -6,11 +6,11 @@
 #
 # Defaults:
 #   markdown-file  docs/ARCHITECTURE.md
-#   output-dir     docs/diagrams
+#   output-dir     docs/diagrams/mermaid   (gitignored; exports are generated on demand)
 #   formats        "svg png"   (any of: svg png pdf)
 #
 # Output files are named after the nearest preceding heading, e.g.
-#   docs/diagrams/03-containers.svg
+#   docs/diagrams/mermaid/03-containers.svg
 #
 # Requirements: Node.js 18+ (npx). The first run downloads mermaid-cli and Chromium.
 
@@ -20,7 +20,7 @@ MERMAID_CLI_VERSION="11.4.2"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 input="${1:-$repo_root/docs/ARCHITECTURE.md}"
-out_dir="${2:-$repo_root/docs/diagrams}"
+out_dir="${2:-$repo_root/docs/diagrams/mermaid}"
 formats="${3:-svg png}"
 
 if [[ ! -f "$input" ]]; then

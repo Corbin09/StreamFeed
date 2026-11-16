@@ -21,7 +21,7 @@ cp .env.example .env                 # first time only
 docker compose up -d --build         # postgres (host port 5433) + backend (port 8000)
 docker compose up -d postgres        # DB only, for local backend dev
 curl localhost:8000/health
-scripts/render-diagrams.sh           # export Mermaid diagrams in docs/ARCHITECTURE.md to docs/diagrams/
+scripts/render-diagrams.sh           # export Mermaid diagrams to docs/diagrams/mermaid/ (gitignored, on demand)
 scripts/render-overview.py           # redraw the illustrated overview (docs/diagrams/streamfeed-overview.*)
 
 # Backend (run from backend/)
@@ -58,7 +58,7 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
 
 ### Target design
 
-The full design is in **`docs/ARCHITECTURE.md`**: containers, components, data model, flows, pipeline rules, API, reliability policies and ADRs. Read the relevant section before building a step, and update the doc whenever the design changes. After editing a diagram, re-run `scripts/render-diagrams.sh` so `docs/diagrams/` stays in sync. When components or their connections change, also update `scripts/render-overview.py`.
+The full design is in **`docs/ARCHITECTURE.md`**: containers, components, data model, flows, pipeline rules, API, reliability policies and ADRs. Read the relevant section before building a step, and update the doc whenever the design changes. Mermaid diagrams live only in the Markdown; their image exports are not committed. The only committed image is the illustrated overview (`docs/diagrams/streamfeed-overview.*`). When components or their connections change, update `scripts/render-overview.py` and re-run it.
 
 Data flow:
 

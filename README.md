@@ -56,7 +56,7 @@ pytest
 The diagrams in `docs/ARCHITECTURE.md` are Mermaid blocks. GitHub and VS Code (with a Mermaid preview extension) render them inline. To export them as image files:
 
 ```bash
-scripts/render-diagrams.sh                                   # docs/ARCHITECTURE.md -> docs/diagrams/*.svg|png
+scripts/render-diagrams.sh                                   # docs/ARCHITECTURE.md -> docs/diagrams/mermaid/*.svg|png (gitignored)
 scripts/render-diagrams.sh docs/ARCHITECTURE.md out/ "png pdf" # custom input, output dir, formats
 ```
 
