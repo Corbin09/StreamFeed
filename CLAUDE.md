@@ -18,7 +18,7 @@ Run all commands from the repo root unless noted.
 
 ```bash
 cp .env.example .env                 # first time only
-docker compose up -d --build         # postgres (host port 5433) + backend (port 8000)
+docker compose up -d --build         # postgres (host port 5433) + backend (port 8000) + frontend (port 3000)
 docker compose up -d postgres        # DB only, for local backend dev
 curl localhost:8000/health
 scripts/render-diagrams.sh           # export Mermaid diagrams to docs/diagrams/mermaid/ (gitignored, on demand)
@@ -34,6 +34,12 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/alembic revision --autogenerate -m "describe change"  # new migration
 .venv/bin/python -m app.seed                                   # upsert data/seeds/sources.yaml
 .venv/bin/python -m app.crawlers list|run <source>|reparse <run_id>  # crawler CLI
+
+# Frontend (run from frontend/)
+npm install
+npm run dev                          # http://localhost:3000 (needs the API on :8000)
+npm run lint && npx tsc --noEmit     # lint + type-check
+npm run build
 ```
 
 DB tests (`tests/test_db.py`) create and migrate a separate `streamfeed_test` database on the same server. Each test runs in a rolled-back transaction, and the tests are skipped if Postgres is down. The backend container runs `alembic upgrade head` and `app.seed` on every start.
@@ -82,7 +88,12 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
   - "Run now" (`POST /sources/{id}/run`) only inserts a `queued` run (row-locked, 409 on an active run, `needs_login` or missing plugin).
   - Settings: `USD_VND_RATE` (salary filter), `STALE_AFTER_DAYS`. Crawler class attributes `label` and `min_interval_minutes` are exposed to the API.
   - API tests (`tests/test_api.py`) override `get_session` with `session_factory`.
-- **ITviec plugin** (`app/crawlers/itviec.py`): fetches listing cards, then detail pages (JSON-LD `JobPosting`); `external_id` is the job slug. Parser tests use trimmed real pages in `tests/fixtures/itviec/`. When ITviec changes its markup, save a fresh page there and update the fixtures.
+- **Frontend** (`frontend/`, Next.js App Router + Tailwind v4 + React Query; see `frontend/README.md`):
+  - Routes: `/` (feed), `/posts/[id]`, `/admin/sources`. All pages are client components that call the API at `NEXT_PUBLIC_API_URL` (inlined at build time; compose passes it as a build arg).
+  - **The URL's search params are sent to `GET /posts` unchanged**, so filter keys in the UI must equal API parameter names. The sidebar is generated from `/meta/categories`.
+  - The salary "pay rail" (`components/PayRail.tsx`) puts every post on one USD scale ($0–6k+, VND converted with `usd_vnd_rate` from `/meta/categories`).
+  - Design tokens are CSS variables in `src/app/globals.css` (light + dark). Font: Be Vietnam Pro with the Vietnamese subset.
+: fetches listing cards, then detail pages (JSON-LD `JobPosting`); `external_id` is the job slug. Parser tests use trimmed real pages in `tests/fixtures/itviec/`. When ITviec changes its markup, save a fresh page there and update the fixtures.
 - **Test helpers:** use the `session_factory` fixture (real commits, tables truncated afterwards) for code that manages its own sessions. Fake crawlers are registered on a local `CrawlerRegistry` (see `tests/test_runner.py`).
 - `posts.price_min/price_max/currency` hold the salary for jobs and the asking price for listings. `duplicate_of_id` links a cross-source duplicate to the canonical post.
 

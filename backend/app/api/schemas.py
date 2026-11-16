@@ -165,3 +165,4 @@ class CategoryMeta(BaseModel):
 
 class CategoriesMeta(BaseModel):
     categories: list[CategoryMeta]
+    usd_vnd_rate: float = Field(description="Rate used to compare VND and USD prices")

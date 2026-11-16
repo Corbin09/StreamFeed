@@ -401,7 +401,9 @@ def test_meta_categories(db, client) -> None:
     )
     add_post(db, src, "Car", category="vehicle")
 
-    cats = {c["key"]: c for c in client.get("/meta/categories").json()["categories"]}
+    meta = client.get("/meta/categories").json()
+    assert meta["usd_vnd_rate"] == 26_000
+    cats = {c["key"]: c for c in meta["categories"]}
     assert list(cats) == ["job", "vehicle"]
     job = cats["job"]
     assert (job["label"], job["price_label"], job["post_count"]) == ("Jobs", "Salary", 2)

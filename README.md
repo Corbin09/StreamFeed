@@ -38,6 +38,7 @@ data/
 cp .env.example .env
 docker compose up --build
 curl http://localhost:8000/health   # {"status":"ok"}
+open http://localhost:3000          # the feed
 ```
 
 ### Local backend development
@@ -49,6 +50,14 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 uvicorn app.main:app --reload
 pytest
+```
+
+### Local frontend development
+
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:3000, expects the API on http://localhost:8000
 ```
 
 ## Architecture diagrams

@@ -490,7 +490,8 @@ Code: `app/api/routes/*` (routers), `app/api/schemas.py` (models), `app/services
          "options": [{"value": "hcmc", "label": "Ho Chi Minh City", "count": 33}, ...]}
       ]
     }
-  ]
+  ],
+  "usd_vnd_rate": 26000
 }
 ```
 
@@ -509,8 +510,12 @@ Code: `app/api/routes/*` (routers), `app/api/schemas.py` (models), `app/services
 - **Filter state lives in the URL** (search params). Feeds can be bookmarked, and the back button works. React Query uses the search params as the query key.
 - **Dynamic filters:** `/meta/categories` drives the tabs and the sidebar. A new category appears without frontend changes, except optional custom rendering.
 - **Rendering:** the layout uses server components; feed, filters and admin are client components (React Query, `useInfiniteQuery`).
-- **Configuration:** `NEXT_PUBLIC_API_URL`.
-- **Display:** UI labels are in English and post content is shown unchanged. Relative times look like "2h ago", and salaries like "15–25M VND" or "$2,000–3,000".
+- **URL = API query:** the page's search params are passed to `GET /posts` unchanged (plus `limit` and `cursor`), so UI filter keys equal API parameter names. Changing a filter replaces the URL; it never pushes history entries for each keystroke (the search box is debounced by 300 ms).
+- **Configuration:** `NEXT_PUBLIC_API_URL`, inlined at build time (a Docker build arg in compose).
+- **Display:** UI labels are in English and post content is shown unchanged (with its `lang` attribute). Relative times look like "2h ago", and salaries like "15–25M VND" or "$2,000–3,000".
+- **Pay rail:** every feed row and the detail page draw the salary as a bar on one shared USD scale ($0 to 6k+, VND converted with `usd_vnd_rate` from `/meta/categories`). The rails line up in a column, so pay can be compared down the feed. Negotiable posts show a dashed, empty track.
+- **Per-viewer state:** the time of the previous visit is kept in `localStorage` to mark posts crawled since then. Saved/hidden state is server-side (`PATCH /posts/{id}`), with optimistic cache updates and an undo toast for Hide.
+- **Admin:** `/admin/sources` polls `/sources` and `/runs` every 3 s while a run is queued or running, and shows a banner when `/health/worker` is not `ok`.
 
 ---
 

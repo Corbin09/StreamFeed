@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+/*
+ * StreamFeed tokens. One accent (jade) carries pay and primary actions; saffron marks
+ * what is new since the last visit; vermilion is reserved for problems.
+ */
+:root {
+  --paper: #f2f4f7;
+  --surface: #ffffff;
+  --ink: #18202e;
+  --muted: #5b6475;
+  --faint: #8a92a3;
+  --line: #d6dae2;
+  --track: #e3e7ee;
+  --jade: #0f7b64;
+  --jade-strong: #0b6150;
+  --jade-soft: #dcefe9;
+  --saffron: #d99a0b;
+  --vermilion: #c0392b;
+  --vermilion-soft: #f8e2df;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #11151d;
+    --surface: #181e29;
+    --ink: #e7eaf0;
+    --muted: #a3abba;
+    --faint: #727b8c;
+    --line: #2a3242;
+    --track: #262e3d;
+    --jade: #3cbf9b;
+    --jade-strong: #5fd4b2;
+    --jade-soft: #173a33;
+    --saffron: #f0b43a;
+    --vermilion: #ef6f5f;
+    --vermilion-soft: #3d1f1c;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-track: var(--track);
+  --color-jade: var(--jade);
+  --color-jade-strong: var(--jade-strong);
+  --color-jade-soft: var(--jade-soft);
+  --color-saffron: var(--saffron);
+  --color-vermilion: var(--vermilion);
+  --color-vermilion-soft: var(--vermilion-soft);
+  --font-sans: var(--font-be-vietnam), ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--jade);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

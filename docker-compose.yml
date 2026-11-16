@@ -31,7 +31,19 @@ services:
       postgres:
         condition: service_healthy
 
-  # The worker (scheduler) and frontend services are added in later steps.
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Inlined into the browser bundle: the URL the *browser* uses to reach the API.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+  # The worker (scheduler) service is added in step 7.
 
 volumes:
   pgdata:

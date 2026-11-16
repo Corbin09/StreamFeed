@@ -143,4 +143,4 @@ def categories(session: SessionDep, settings: SettingsDep) -> CategoriesMeta:
                 filters=_filters(facets, key),
             )
         )
-    return CategoriesMeta(categories=out)
+    return CategoriesMeta(categories=out, usd_vnd_rate=settings.usd_vnd_rate)
