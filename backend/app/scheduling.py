@@ -1,4 +1,4 @@
-"""Daily run windows for sources that must run at most once a day (LinkedIn).
+"""Daily run windows for sources that must run at most once a day (Facebook).
 
 A source opts in with `config.daily_window = "HH:MM-HH:MM"` (local time, `TIMEZONE`). Each
 day it runs once, at a random but stable minute inside the window, which looks like a

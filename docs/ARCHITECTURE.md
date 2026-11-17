@@ -12,7 +12,7 @@ Status: **approved design**. Implemented so far: project scaffold, database sche
 
 | ID | Requirement |
 |----|-------------|
-| F1 | Crawl IT job posts from ITviec, LinkedIn and Facebook groups every 1–3 hours. |
+| F1 | Crawl IT job posts from ITviec (every 1–3 hours) and Facebook groups (once a day). LinkedIn was dropped (see Source plugins). |
 | F2 | Normalize posts written in Vietnamese or English: salary, location, level, skills, language. |
 | F3 | Merge the same post seen on multiple sources ("Also on: LinkedIn"). |
 | F4 | Accent-insensitive full-text search (`lap trinh` matches `lập trình`) plus filters: source, location, salary, level, language, posted time. |
@@ -40,14 +40,12 @@ flowchart LR
     user([User<br/>browser])
     sf[StreamFeed]
     itviec[(ITviec<br/>public pages)]
-    li[(LinkedIn<br/>logged-in)]
     fb[(Facebook groups<br/>logged-in)]
     later[(Phase 2:<br/>Chợ Tốt, Batdongsan, ...)]
     tg[Telegram<br/><i>planned alerts</i>]
 
     user -- "search, filter, save, admin" --> sf
     sf -- "HTTP (httpx)" --> itviec
-    sf -- "headless browser (Playwright)" --> li
     sf -- "headless browser (Playwright)" --> fb
     sf -.-> later
     sf -. "needs_login / error alerts" .-> tg
@@ -79,7 +77,7 @@ flowchart TB
 |-----------|------|----------------|
 | `frontend` | Next.js (App Router), Tailwind, React Query | UI only; talks to `api` over REST. |
 | `api` | FastAPI, SQLAlchemy | Search, CRUD, admin, enqueue manual runs. Runs migrations + seed on start. **Never crawls.** |
-| `worker` | Same backend codebase and image, `python -m app.worker`. Switches to `mcr.microsoft.com/playwright/python` when the first browser plugin (LinkedIn) lands. | Scheduling, crawling, pipeline, housekeeping. |
+| `worker` | Same backend codebase, `python -m app.worker`, Dockerfile target `worker` (adds Google Chrome for BrowserFetcher). | Scheduling, crawling, pipeline, housekeeping. |
 | `postgres` | PostgreSQL 16 + `unaccent`, `pg_trgm` | System of record **and** the job queue. |
 | `data/` | Bind-mounted directory | Raw pages, login sessions, seed files, DB backups. |
 
@@ -182,7 +180,7 @@ class BaseCrawler(ABC):
 | Plugin | Status | How it works |
 |--------|--------|--------------|
 | `itviec` | built | Listing pages `/it-jobs[/<keyword>][/<location>]?page=N` (20 cards each) until `max_posts_per_run` slugs are collected, then one detail page per job. Cards give title, company, the precise "posted N minutes ago" time, work mode and skill tags. The detail page's JSON-LD `JobPosting` gives description, benefits, salary text, address and expiry. `external_id` is the job slug. Salaries are often hidden ("You'll love it"). |
-| `linkedin` | built, **disabled** | Logged-out ("guest") job search, no account: `/jobs-guest/jobs/api/seeMoreJobPostings/search` (10 cards per call, paginated with `start`, `f_TPR=r86400` = last 24 h, newest first) for each configured keyword, then `/jobs-guest/jobs/api/jobPosting/<id>` for the first `max_details_per_run` jobs (description, seniority, employment type, job function). Runs once a day in `daily_window`. 3–8 s between requests; 429, 999 or a redirect to a login wall stops the run at once and keeps what was already fetched (only a block on the first request fails it). Seniority is a fallback for levels when the title names none. **Status (2026-11-17):** LinkedIn answers 429 to Python HTTP clients (TLS fingerprint) while curl from the same IP gets 200, so the source is disabled until a fetch method is chosen (see §18). |
+| `linkedin` | dropped (2026-11-17) | A guest-search crawler was built and removed: LinkedIn answered 429 to every automated client tried (httpx, Playwright Chromium, Chrome stable in the container) while curl and an older local Chrome got 200. Not pursued further, since getting through would mean evading its bot detection. A browser extension that saves jobs the owner browses is the open alternative. |
 | `facebook` | deferred | Options were reviewed (no Groups API since 2024; browser extension capture, bookmarklet, email digests, logged-in Playwright, paid scrapers). Postponed by the owner. |
 
 ---
@@ -346,8 +344,8 @@ Posts parsed earlier in the interrupted run are not ingested. Their pages are al
 
 ### 6.4 Manual login (on the host machine)
 
-1. Run `python -m app.crawlers.login linkedin`. This opens a **headed** Chromium; you log in and pass 2FA yourself.
-2. The CLI saves Playwright `storage_state` (cookies + localStorage) to `data/sessions/linkedin.json` with mode `0600`.
+1. Run `python -m app.crawlers.login facebook`. This opens a **headed** Chromium; you log in and pass 2FA yourself.
+2. The CLI saves Playwright `storage_state` (cookies + localStorage) to `data/sessions/facebook.json` with mode `0600`.
 3. The CLI resets the source to `status='idle'`.
 4. The worker container loads the same JSON into a fresh browser context.
 
@@ -549,7 +547,7 @@ Code: `app/api/routes/*` (routers), `app/api/schemas.py` (models), `app/services
 | Concern | Policy |
 |---------|--------|
 | ITviec rate | 1 request every 2–4 s (random), realistic desktop User-Agent, up to 3 retries with exponential backoff on 5xx or timeout. |
-| LinkedIn rate | Once a day in a local window (`config.daily_window`, random minute per day, `app/scheduling.py`); a manual run counts as that day's run; failures skip 2/4/8 days. 3–8 s between requests, about 50 search calls and 100 detail pages per run. Throttling is never retried. |
+| Daily sources (Facebook) | Once a day in a local window (`config.daily_window`, random minute per day, `app/scheduling.py`); a manual run counts as that day's run; failures skip 2/4/8 days. Throttling is never retried. |
 | Login wall / checkpoint | Stop immediately, set `needs_login`, **never retry** (flow 6.3). |
 | Consecutive failures | The effective interval is `interval × 2^failures`, capped at ×8. After 5 failures, `status=error`; the source keeps running at the capped interval. |
 | Partial failures | One bad page or post is logged and skipped; the run still succeeds. |
@@ -589,7 +587,7 @@ flowchart LR
   - `BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD` and `POSTGRES_PASSWORD` are required (compose refuses to start without them).
   - Put HTTPS in front: Basic Auth over plain HTTP exposes the password. A tunnel (ngrok, Cloudflare Tunnel) needs no open inbound port; on a VPS, Caddy with automatic HTTPS works too.
   - `POSTGRES_PASSWORD` only takes effect when the volume is first created. To change it later, run `ALTER USER` inside Postgres as well.
-- **Login sessions** (LinkedIn/Facebook, planned) are created on the host and reach the worker through the `./data` mount. The Playwright versions on the host and in the worker image must match.
+- **Login sessions** (Facebook) are created on the host and reach the worker through the `./data` mount. The Playwright versions on the host and in the worker image must match.
 - *(planned)* **Backups:** a daily `pg_dump` into `data/backups/` (gitignored), keeping 7 copies.
 
 ---
@@ -600,7 +598,7 @@ flowchart LR
   - They live in `data/sessions/*.json`, which is gitignored, with mode `0600`.
   - The `api` container never needs them.
   - Cookies are never logged.
-- **Use a secondary account** for LinkedIn and Facebook.
+- **Use a secondary account** for Facebook.
 - **No data leaves the system.**
   - Scraped content is only shown to the owner.
   - There is no public API and no re-publishing.
@@ -663,8 +661,8 @@ flowchart LR
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| LinkedIn/Facebook ToS violation; account restriction or ban | Source lost | LinkedIn uses no account (guest search). Low rates, stop on the first block, no retry loops. |
-| LinkedIn blocks non-browser clients (429 by TLS fingerprint, seen 2026-11-17) | No LinkedIn data | Source disabled; open decision: real browser, email job alerts, or no LinkedIn. |
+| Facebook ToS violation; account restriction or ban | Source lost | Secondary account, once a day, low volume, stop on the first checkpoint, no retry loops. |
+| LinkedIn refuses automated clients (seen 2026-11-17) | No LinkedIn data | Plugin dropped; possible browser extension later. |
 | Site layout changes break selectors | Silent data loss | Selector-drift detection, fixture tests, raw pages for re-parse. |
 | Facebook limits group content for automated sessions | Fewer posts | Prefer `m.facebook.com`/`mbasic`, keep volume low; accept partial coverage. |
 | Salary/location mis-parsing on free text | Wrong filters | Conservative parsing (leave null when unsure), table-driven tests with real samples. |

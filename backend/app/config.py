@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     worker_poll_seconds: int = 15
     # Local time zone for daily run windows (sources.config.daily_window).
     timezone: str = "Asia/Ho_Chi_Minh"
+    # Browser for BrowserFetcher and the login CLI. BROWSER_CHANNEL=chrome uses the installed
+    # Google Chrome stable (the worker image sets it); empty uses Playwright's bundled
+    # Chromium. BROWSER_EXECUTABLE_PATH points at any other Chromium-based binary (e.g. Brave
+    # or Chrome on the host for the headed login).
+    browser_channel: str | None = None
+    browser_executable_path: str | None = None
     raw_retention_days: int = 30
     run_retention_days: int = 90
 

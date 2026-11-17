@@ -136,15 +136,15 @@ def test_crawl_run_defaults(session: Session) -> None:
 
 def test_seed_sources_is_idempotent_and_keeps_runtime_state(session: Session) -> None:
     entries = load_seed_file(SEED_FILE)
-    assert {e["type"] for e in entries} == {"itviec", "linkedin", "facebook"}
+    assert {e["type"] for e in entries} == {"itviec", "facebook"}
 
-    assert seed_sources(session, entries) == (3, 0)
+    assert seed_sources(session, entries) == (2, 0)
     itviec = session.scalar(select(Source).where(Source.type == "itviec"))
     itviec.enabled = False  # simulate a runtime change from the admin UI
     session.flush()
 
-    assert seed_sources(session, entries) == (0, 3)
-    assert session.scalar(select(func.count()).select_from(Source)) == 3
+    assert seed_sources(session, entries) == (0, 2)
+    assert session.scalar(select(func.count()).select_from(Source)) == 2
     session.refresh(itviec)
     assert itviec.enabled is False
 

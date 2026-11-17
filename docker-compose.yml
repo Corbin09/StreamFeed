@@ -22,7 +22,9 @@ services:
 
   # REST API. Runs migrations and the source seed on start. Never crawls.
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      target: api
     restart: unless-stopped
     env_file: .env
     environment:
@@ -42,11 +44,12 @@ services:
       retries: 12
       start_period: 10s
 
-  # Scheduler + queue poller + crawlers (python -m app.worker). Same image as the API: the
-  # current plugins only need HTTP. A Playwright image arrives with the LinkedIn plugin.
+  # Scheduler + queue poller + crawlers (python -m app.worker). The `worker` target adds
+  # Google Chrome for BrowserFetcher (Facebook); the API image stays browser-free.
   worker:
-    build: ./backend
-    command: ["python", "-m", "app.worker"]
+    build:
+      context: ./backend
+      target: worker
     restart: unless-stopped
     env_file: .env
     environment:
@@ -61,6 +64,8 @@ services:
     # Let an in-flight crawl finish on `docker compose stop`; an interrupted run is marked
     # failed by the next worker start (orphan recovery).
     stop_grace_period: 2m
+    # Chromium needs more shared memory than Docker's 64 MB default.
+    shm_size: 512m
 
   # Next.js UI. The browser only talks to this service; /api/* is proxied to the backend.
   frontend:

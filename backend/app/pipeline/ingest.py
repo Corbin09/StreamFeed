@@ -89,7 +89,7 @@ def build_row(source_id: int, category: str, raw: RawPost) -> dict[str, Any]:
         attributes["salary_text"] = raw.salary_raw.strip()
     if category == Category.JOB:
         # The title is the most reliable signal; a source's own seniority field
-        # (LinkedIn "Mid-Senior level") is the fallback.
+        # (e.g. a "Mid-Senior level" field) is the fallback.
         attributes["levels"] = detect_levels(raw.title) or list(raw.extra.get("levels") or [])
         attributes["skills"] = (
             normalize_skill_tags(raw.tags)

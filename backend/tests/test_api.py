@@ -323,7 +323,7 @@ def test_patch_source(db, client) -> None:
 
 
 def test_daily_window_is_validated_and_reported(db, client) -> None:
-    src = add_source(db, "linkedin", interval_minutes=1440)
+    src = add_source(db, interval_minutes=1440)
     bad = client.patch(f"/sources/{src.id}", json={"config": {"daily_window": "9-7"}})
     assert bad.status_code == 422
     assert "daily_window" in bad.json()["detail"]
@@ -333,8 +333,6 @@ def test_daily_window_is_validated_and_reported(db, client) -> None:
     body = ok.json()
     assert body["daily_window"] == "07:00-09:00"
     assert body["next_run_at"] is not None
-    assert body["min_interval_minutes"] == 1440
-    assert client.patch(f"/sources/{src.id}", json={"interval_minutes": 180}).status_code == 422
 
 
 def test_run_now_queues_once(db, client) -> None:
