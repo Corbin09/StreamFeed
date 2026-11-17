@@ -27,6 +27,8 @@ class Settings(BaseSettings):
 
     # Worker: idle poll interval for queued runs and due sources; retention (§15).
     worker_poll_seconds: int = 15
+    # Local time zone for daily run windows (sources.config.daily_window).
+    timezone: str = "Asia/Ho_Chi_Minh"
     raw_retention_days: int = 30
     run_retention_days: int = 90
 

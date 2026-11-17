@@ -182,8 +182,8 @@ class BaseCrawler(ABC):
 | Plugin | Status | How it works |
 |--------|--------|--------------|
 | `itviec` | built | Listing pages `/it-jobs[/<keyword>][/<location>]?page=N` (20 cards each) until `max_posts_per_run` slugs are collected, then one detail page per job. Cards give title, company, the precise "posted N minutes ago" time, work mode and skill tags. The detail page's JSON-LD `JobPosting` gives description, benefits, salary text, address and expiry. `external_id` is the job slug. Salaries are often hidden ("You'll love it"). |
-| `linkedin` | planned (step 8) | Playwright with a `storage_state` session. |
-| `facebook` | planned (step 9) | Playwright with a `storage_state` session, `filter_non_jobs = True`. |
+| `linkedin` | built, **disabled** | Logged-out ("guest") job search, no account: `/jobs-guest/jobs/api/seeMoreJobPostings/search` (10 cards per call, paginated with `start`, `f_TPR=r86400` = last 24 h, newest first) for each configured keyword, then `/jobs-guest/jobs/api/jobPosting/<id>` for the first `max_details_per_run` jobs (description, seniority, employment type, job function). Runs once a day in `daily_window`. 3–8 s between requests; 429, 999 or a redirect to a login wall stops the run at once and keeps what was already fetched (only a block on the first request fails it). Seniority is a fallback for levels when the title names none. **Status (2026-11-17):** LinkedIn answers 429 to Python HTTP clients (TLS fingerprint) while curl from the same IP gets 200, so the source is disabled until a fetch method is chosen (see §18). |
+| `facebook` | deferred | Options were reviewed (no Groups API since 2024; browser extension capture, bookmarklet, email digests, logged-in Playwright, paid scrapers). Postponed by the owner. |
 
 ---
 
@@ -549,7 +549,7 @@ Code: `app/api/routes/*` (routers), `app/api/schemas.py` (models), `app/services
 | Concern | Policy |
 |---------|--------|
 | ITviec rate | 1 request every 2–4 s (random), realistic desktop User-Agent, up to 3 retries with exponential backoff on 5xx or timeout. |
-| LinkedIn/Facebook rate | At most 50 posts per run, 3–8 s random delay between actions, human-like scrolling. Minimum interval 180 min, at most 3 runs per day per source. |
+| LinkedIn rate | Once a day in a local window (`config.daily_window`, random minute per day, `app/scheduling.py`); a manual run counts as that day's run; failures skip 2/4/8 days. 3–8 s between requests, about 50 search calls and 100 detail pages per run. Throttling is never retried. |
 | Login wall / checkpoint | Stop immediately, set `needs_login`, **never retry** (flow 6.3). |
 | Consecutive failures | The effective interval is `interval × 2^failures`, capped at ×8. After 5 failures, `status=error`; the source keeps running at the capped interval. |
 | Partial failures | One bad page or post is logged and skipped; the run still succeeds. |
@@ -663,7 +663,8 @@ flowchart LR
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| LinkedIn/Facebook ToS violation; account restriction or ban | Source lost | Secondary account, low rates, stop on checkpoint, no retry loops. |
+| LinkedIn/Facebook ToS violation; account restriction or ban | Source lost | LinkedIn uses no account (guest search). Low rates, stop on the first block, no retry loops. |
+| LinkedIn blocks non-browser clients (429 by TLS fingerprint, seen 2026-11-17) | No LinkedIn data | Source disabled; open decision: real browser, email job alerts, or no LinkedIn. |
 | Site layout changes break selectors | Silent data loss | Selector-drift detection, fixture tests, raw pages for re-parse. |
 | Facebook limits group content for automated sessions | Fewer posts | Prefer `m.facebook.com`/`mbasic`, keep volume low; accept partial coverage. |
 | Salary/location mis-parsing on free text | Wrong filters | Conservative parsing (leave null when unsure), table-driven tests with real samples. |

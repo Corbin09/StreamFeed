@@ -87,6 +87,9 @@ export type Source = {
   plugin_available: boolean;
   post_count: number;
   last_run: Run | null;
+  /** "07:00-09:00" when the source runs once a day in that local window. */
+  daily_window: string | null;
+  next_run_at: string | null;
 };
 
 export type FilterOption = { value: string; label: string; count: number | null };
@@ -149,7 +152,10 @@ export const api = {
     request<PostDetail>(`/posts/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   categories: () => request<CategoriesMeta>("/meta/categories"),
   sources: () => request<Source[]>("/sources"),
-  updateSource: (id: number, patch: { enabled?: boolean; interval_minutes?: number }) =>
+  updateSource: (
+    id: number,
+    patch: { enabled?: boolean; interval_minutes?: number; config?: Record<string, unknown> },
+  ) =>
     request<Source>(`/sources/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   runSource: (id: number) => request<{ run_id: number }>(`/sources/${id}/run`, { method: "POST" }),
   runs: (limit = 20) => request<Run[]>(`/runs?limit=${limit}`),

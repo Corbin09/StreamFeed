@@ -9,8 +9,9 @@ One worker runs one crawl at a time in its main loop:
 2. Claim the oldest `queued` run ("Run now") with `FOR UPDATE SKIP LOCKED` and execute it.
 3. Otherwise run the most overdue scheduled source. A source is due when
    `last_run_at + interval × backoff ± jitter` has passed; backoff doubles per consecutive
-   failure, capped at ×8. Disabled sources, `needs_login` sources, sources without a plugin
-   and sources with an active run are skipped.
+   failure, capped at ×8. Sources with `config.daily_window` run once a day inside that
+   window instead (`app/scheduling.py`). Disabled sources, `needs_login` sources,
+   sources without a plugin and sources with an active run are skipped.
 
 The heartbeat and daily housekeeping run on an APScheduler background thread so they keep
 going while a crawl is in progress.
@@ -28,6 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import delete, func, select, text
@@ -46,6 +48,7 @@ from app.models import (
     SourceStatus,
     WorkerHeartbeat,
 )
+from app.scheduling import InvalidWindow, next_daily_run, parse_window
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +167,20 @@ class Worker:
 
     def next_due_at(self, source: Source) -> datetime | None:
         """When a source should run next; None means as soon as possible."""
+        try:
+            window = parse_window((source.config or {}).get("daily_window"))
+        except InvalidWindow:
+            logger.warning("Source %s has an invalid daily_window; using its interval", source.id)
+            window = None
+        if window is not None:
+            return next_daily_run(
+                window=window,
+                source_id=source.id,
+                last_run_at=source.last_run_at,
+                consecutive_failures=source.consecutive_failures,
+                now=self.clock(),
+                tz=ZoneInfo(self.settings.timezone),
+            )
         if source.last_run_at is None:
             return None
         minutes = source.interval_minutes * backoff_multiplier(source.consecutive_failures)

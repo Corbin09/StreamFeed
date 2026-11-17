@@ -3,6 +3,9 @@
 "Run now" only inserts a queued `crawl_runs` row; the worker claims and executes it.
 """
 
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import distinct_on
@@ -10,9 +13,11 @@ from sqlalchemy.dialects.postgresql import distinct_on
 from app.api.deps import SessionDep
 from app.api.schemas import RunQueued, SourceOut, SourceUpdate
 from app.api.serializers import run_out
+from app.config import get_settings
 from app.crawlers.base import BaseCrawler
 from app.crawlers.registry import UnknownSourceType, load_builtin_crawlers
 from app.models import CrawlRun, CrawlRunStatus, CrawlRunTrigger, Post, Source, SourceStatus
+from app.scheduling import InvalidWindow, next_daily_run, parse_window
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
@@ -26,8 +31,27 @@ def _plugin(source_type: str) -> type[BaseCrawler] | None:
         return None
 
 
+def _daily_schedule(source: Source) -> tuple[str | None, datetime | None]:
+    try:
+        window = parse_window((source.config or {}).get("daily_window"))
+    except InvalidWindow:
+        return None, None
+    if window is None:
+        return None, None
+    next_run = next_daily_run(
+        window=window,
+        source_id=source.id,
+        last_run_at=source.last_run_at,
+        consecutive_failures=source.consecutive_failures,
+        now=datetime.now(UTC),
+        tz=ZoneInfo(get_settings().timezone),
+    )
+    return str(window), next_run
+
+
 def _source_out(source: Source, last_run: CrawlRun | None, post_count: int) -> SourceOut:
     plugin = _plugin(source.type)
+    daily_window, next_run_at = _daily_schedule(source)
     return SourceOut(
         id=source.id,
         type=source.type,
@@ -44,6 +68,8 @@ def _source_out(source: Source, last_run: CrawlRun | None, post_count: int) -> S
         plugin_available=plugin is not None,
         post_count=post_count,
         last_run=run_out(last_run, source) if last_run else None,
+        daily_window=daily_window,
+        next_run_at=next_run_at,
     )
 
 
@@ -104,6 +130,12 @@ def update_source(source_id: int, body: SourceUpdate, session: SessionDep) -> So
     for name in ("enabled", "interval_minutes", "config"):
         if name in changes and changes[name] is None:
             raise HTTPException(422, f"{name} cannot be null")
+
+    if "config" in changes:
+        try:
+            parse_window(changes["config"].get("daily_window"))
+        except InvalidWindow as exc:
+            raise HTTPException(422, str(exc)) from None
 
     if "interval_minutes" in changes:
         plugin = _plugin(source.type)

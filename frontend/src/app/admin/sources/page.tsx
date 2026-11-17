@@ -7,6 +7,16 @@ import { api, type Run, type RunStatus, type Source, type SourceStatus } from "@
 import { fullDate, intervalLabel, sourceLabel, timeAgo } from "@/lib/format";
 
 const INTERVALS = [30, 60, 120, 180, 360, 720, 1440];
+// Daily windows offered for once-a-day sources (local time, see backend app/scheduling.py).
+const DAILY_WINDOWS = ["07:00-09:00", "11:30-13:30", "19:00-22:00"];
+
+function nextRunLabel(iso: string): string {
+  const at = new Date(iso);
+  if (at.getTime() <= Date.now()) return "Next run: due now";
+  const sameDay = at.toDateString() === new Date().toDateString();
+  const time = at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return `Next run: ${sameDay ? "today" : at.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} at ${time}`;
+}
 const ACTIVE: RunStatus[] = ["queued", "running"];
 
 const STATUS: Record<SourceStatus, { label: string; tone: "ok" | "idle" | "bad" }> = {
@@ -68,7 +78,8 @@ function SourceRow({ source, onError }: { source: Source; onError: (msg: string)
     qc.invalidateQueries({ queryKey: ["runs"] });
   };
   const patch = useMutation({
-    mutationFn: (body: { enabled?: boolean; interval_minutes?: number }) => api.updateSource(source.id, body),
+    mutationFn: (body: { enabled?: boolean; interval_minutes?: number; config?: Record<string, unknown> }) =>
+      api.updateSource(source.id, body),
     onSuccess: (updated) => qc.setQueryData<Source[]>(["sources"], (all) => all?.map((s) => (s.id === updated.id ? updated : s))),
     onError: (e) => onError(e.message),
   });
@@ -95,6 +106,9 @@ function SourceRow({ source, onError }: { source: Source; onError: (msg: string)
           {sourceLabel(source.type)}
           {source.plugin_available ? `, ${source.post_count} posts` : ", crawler not built yet"}
         </p>
+        {source.enabled && source.next_run_at && (
+          <p className="mt-1 text-sm text-muted">{nextRunLabel(source.next_run_at)}</p>
+        )}
         {source.status === "needs_login" && (
           <p className="mt-2 text-sm">
             Log in on the host with <code className="rounded bg-track px-1 py-0.5 text-[13px]">python -m app.crawlers.login {source.type}</code>, then run again.
@@ -114,21 +128,37 @@ function SourceRow({ source, onError }: { source: Source; onError: (msg: string)
           label={`Crawl ${source.name} on a schedule`}
         />
         <label className="sr-only" htmlFor={`interval-${source.id}`}>
-          How often to crawl {source.name}
+          {source.daily_window ? `When ${source.name} runs each day` : `How often to crawl ${source.name}`}
         </label>
-        <select
-          id={`interval-${source.id}`}
-          value={source.interval_minutes}
-          disabled={!source.enabled}
-          onChange={(e) => patch.mutate({ interval_minutes: Number(e.target.value) })}
-          className="rounded-md border border-line bg-surface px-2 py-1.5 text-sm disabled:text-faint"
-        >
-          {intervals.map((m) => (
-            <option key={m} value={m}>
-              {intervalLabel(m)}
-            </option>
-          ))}
-        </select>
+        {source.daily_window ? (
+          <select
+            id={`interval-${source.id}`}
+            value={source.daily_window}
+            disabled={!source.enabled}
+            onChange={(e) => patch.mutate({ config: { ...source.config, daily_window: e.target.value } })}
+            className="rounded-md border border-line bg-surface px-2 py-1.5 text-sm disabled:text-faint"
+          >
+            {[...new Set([...DAILY_WINDOWS, source.daily_window])].map((w) => (
+              <option key={w} value={w}>
+                Daily, {w.replace("-", "–")}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <select
+            id={`interval-${source.id}`}
+            value={source.interval_minutes}
+            disabled={!source.enabled}
+            onChange={(e) => patch.mutate({ interval_minutes: Number(e.target.value) })}
+            className="rounded-md border border-line bg-surface px-2 py-1.5 text-sm disabled:text-faint"
+          >
+            {intervals.map((m) => (
+              <option key={m} value={m}>
+                {intervalLabel(m)}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       <div className="min-w-0 text-sm">

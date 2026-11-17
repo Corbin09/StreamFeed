@@ -24,7 +24,9 @@ RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 class HttpFetcher:
     """Polite HTTP client: random delay between requests, retries with exponential backoff.
 
-    Retries on connection errors, timeouts, 429 and 5xx. Other 4xx responses fail at once.
+    Retries on connection errors, timeouts and `retry_status` (default: 429 and 5xx).
+    Any other status >= 400 fails at once with `FetchError.status` set. Sources that must
+    back off immediately when throttled (LinkedIn) pass a `retry_status` without 429.
     """
 
     def __init__(
@@ -34,6 +36,7 @@ class HttpFetcher:
         max_retries: int = 3,
         backoff_base: float = 2.0,
         timeout: float = 30.0,
+        retry_status: frozenset[int] | set[int] = frozenset(RETRYABLE_STATUS),
         headers: dict[str, str] | None = None,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
@@ -41,6 +44,7 @@ class HttpFetcher:
         self.delay = delay
         self.max_retries = max_retries
         self.backoff_base = backoff_base
+        self.retry_status = frozenset(retry_status)
         self._sleep = sleep
         self._requests_made = 0
         self._client = httpx.Client(
@@ -61,11 +65,13 @@ class HttpFetcher:
 
         attempt = 0
         while True:
+            status: int | None = None
             try:
                 response = self._client.get(url, params=params)
             except httpx.TransportError as exc:
                 error: str = f"{type(exc).__name__}: {exc}"
             else:
+                status = response.status_code
                 if response.status_code < 400:
                     return RawPage(
                         url=str(response.url),
@@ -73,11 +79,11 @@ class HttpFetcher:
                         content_type=response.headers.get("content-type", "text/html"),
                     )
                 error = f"HTTP {response.status_code} for {response.url}"
-                if response.status_code not in RETRYABLE_STATUS:
-                    raise FetchError(error)
+                if response.status_code not in self.retry_status:
+                    raise FetchError(error, status)
 
             if attempt >= self.max_retries:
-                raise FetchError(f"{error} (gave up after {attempt + 1} attempts)")
+                raise FetchError(f"{error} (gave up after {attempt + 1} attempts)", status)
             wait = self.backoff_base ** (attempt + 1)
             logger.warning("Retrying %s in %.0fs: %s", url, wait, error)
             self._sleep(wait)

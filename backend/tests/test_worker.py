@@ -240,3 +240,29 @@ def test_run_forever_stops_on_event(make_worker, session_factory) -> None:
     with session_factory() as session:
         assert session.scalar(select(func.count()).select_from(Post)) == 2
         assert session.scalar(select(func.count()).select_from(WorkerHeartbeat)) == 1
+
+
+def test_daily_window_source_runs_once_a_day(make_worker, session_factory) -> None:
+    from zoneinfo import ZoneInfo
+
+    vn = ZoneInfo("Asia/Ho_Chi_Minh")
+    yesterday = datetime(2026, 11, 16, 7, 30, tzinfo=vn)
+    sid = add_source(
+        session_factory,
+        interval_minutes=1440,
+        last_run_at=yesterday,
+        config={"daily_window": "07:00-09:00"},
+    )
+    before_window = make_worker(clock=lambda: datetime(2026, 11, 17, 6, 0, tzinfo=vn))
+    assert before_window.due_sources() == []
+    after_window = make_worker(clock=lambda: datetime(2026, 11, 17, 9, 0, tzinfo=vn))
+    assert after_window.due_sources() == [sid]
+    with session_factory() as session:
+        session.get(Source, sid).last_run_at = datetime(2026, 11, 17, 8, 0, tzinfo=vn)
+        session.commit()
+    assert after_window.due_sources() == []  # already ran today
+
+
+def test_invalid_daily_window_falls_back_to_interval(make_worker, session_factory) -> None:
+    sid = add_source(session_factory, config={"daily_window": "soon"})
+    assert make_worker().due_sources() == [sid]  # never ran -> due

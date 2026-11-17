@@ -14,16 +14,21 @@ sources:
 
   - type: linkedin
     name: LinkedIn - Job search
-    enabled: false          # enable after running the manual login CLI
-    interval_minutes: 180
+    enabled: false          # guest search; LinkedIn currently answers 429 to non-browser clients
+    interval_minutes: 1440  # once a day; the run time comes from daily_window
     config:
-      keywords: ["software engineer"]
+      # One search per keyword, posts from the last 24 hours, newest first.
+      keywords: ["software engineer", "developer", "devops", "data engineer", "tester"]
       location: "Vietnam"
-      max_posts_per_run: 50
+      time_range: "r86400"    # f_TPR: r86400 = last 24 hours
+      pages_per_keyword: 10   # 10 jobs per page
+      max_details_per_run: 100  # full descriptions; other jobs keep the card data
+      max_posts_per_run: 300
+      daily_window: "07:00-09:00"  # local time (TIMEZONE), random minute each day
 
   - type: facebook
     name: Facebook - IT job groups
-    enabled: false          # enable after running the manual login CLI
+    enabled: false          # no crawler yet (deferred; see ARCHITECTURE.md §18)
     interval_minutes: 180
     config:
       groups: []            # group URLs or IDs

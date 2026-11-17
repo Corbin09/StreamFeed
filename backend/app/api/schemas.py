@@ -110,6 +110,12 @@ class SourceOut(BaseModel):
     plugin_available: bool
     post_count: int
     last_run: RunOut | None
+    daily_window: str | None = Field(
+        None, description="Local HH:MM-HH:MM window when the source runs once a day"
+    )
+    next_run_at: datetime | None = Field(
+        None, description="Planned next run for daily-window sources (may be in the past)"
+    )
 
 
 class SourceUpdate(BaseModel):
