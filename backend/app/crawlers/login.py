@@ -5,7 +5,8 @@ Usage (from backend/, with the dev stack running so the database is reachable):
     .venv/bin/python -m app.crawlers.login facebook [--browser-path /usr/bin/brave-browser]
 
 A visible browser window opens on the site's login page. Log in yourself (use the secondary
-account, pass 2FA), then come back to the terminal and press Enter. The session is saved to
+account, pass 2FA). The CLI notices when the login is complete (session cookie set and no
+longer on a login, checkpoint or 2FA page), waits a few seconds, and saves the session to
 `data/sessions/<type>.json` with mode 0600; the worker loads it in every run. The source's
 `needs_login` state and failure count are reset so it is scheduled again.
 
@@ -17,7 +18,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from sqlalchemy import update
 
@@ -31,8 +34,20 @@ SITES: dict[str, dict[str, str]] = {
         "login_url": "https://www.facebook.com/login",
         "cookie": "c_user",  # present only when logged in
         "domain": "facebook.com",
+        # While the page is on one of these, the login is not finished yet.
+        "pending_paths": "/login,/checkpoint,/two_step_verification,/two_factor,/recover",
     },
 }
+
+POLL_SECONDS = 2.0
+SETTLE_SECONDS = 5.0
+
+
+def login_complete(site: dict[str, str], cookie_names: set[str], url: str) -> bool:
+    if site["cookie"] not in cookie_names:
+        return False
+    path = urlparse(url).path
+    return not any(path.startswith(p) for p in site["pending_paths"].split(","))
 
 
 def session_file(source_type: str) -> Path:
@@ -53,6 +68,9 @@ def reset_sources(source_type: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("source_type", choices=sorted(SITES))
+    parser.add_argument(
+        "--timeout", type=int, default=600, help="seconds to wait for the login (default 600)"
+    )
     parser.add_argument(
         "--browser-path",
         help="Chromium-based browser to open (e.g. /usr/bin/brave-browser); "
@@ -76,21 +94,31 @@ def main(argv: list[str] | None = None) -> int:
         page.goto(site["login_url"])
         print(
             f"\nA browser window is open at {site['login_url']}.\n"
-            "Log in with the secondary account (finish 2FA and any checks),\n"
-            "wait until the home feed shows, then press Enter here. Ctrl+C cancels.\n"
+            "Log in with the secondary account (finish 2FA and any checks).\n"
+            "The session is saved automatically once the login is complete. Ctrl+C cancels.\n",
+            flush=True,
         )
+        deadline = time.monotonic() + args.timeout
         try:
-            input()
-        except (KeyboardInterrupt, EOFError):
+            while True:
+                if browser.contexts == [] or page.is_closed():
+                    print("The browser window was closed; nothing saved.", file=sys.stderr)
+                    return 1
+                names = {c["name"] for c in context.cookies() if site["domain"] in c["domain"]}
+                if login_complete(site, names, page.url):
+                    break
+                if time.monotonic() > deadline:
+                    browser.close()
+                    print(f"No login within {args.timeout} s; nothing saved.", file=sys.stderr)
+                    return 1
+                time.sleep(POLL_SECONDS)
+            print("Login detected; saving the session in a few seconds...", flush=True)
+            time.sleep(SETTLE_SECONDS)  # let the site finish setting its cookies
+        except KeyboardInterrupt:
             browser.close()
             print("Cancelled; nothing saved.")
             return 1
 
-        cookies = {c["name"] for c in context.cookies() if site["domain"] in c["domain"]}
-        if site["cookie"] not in cookies:
-            browser.close()
-            print("Not logged in yet (no session cookie found); nothing saved.", file=sys.stderr)
-            return 1
         save_storage_state(context, target)
         browser.close()
 

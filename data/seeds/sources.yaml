@@ -17,7 +17,8 @@ sources:
     enabled: false          # enable after `python -m app.crawlers.login facebook` and adding groups
     interval_minutes: 1440  # once a day; the run time comes from daily_window
     config:
-      groups: []            # group URLs, ids or slugs, e.g. "https://www.facebook.com/groups/123456"
+      groups:               # group URLs, ids or slugs
+        - "https://www.facebook.com/groups/268623039201252/"
       max_posts_per_group: 30
       max_scrolls: 12       # scroll steps per group (3-8 s apart)
       max_posts_per_run: 150

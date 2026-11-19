@@ -162,3 +162,13 @@ def test_fetcher_uses_the_saved_session_and_refreshes_it() -> None:
         assert fetcher.delay == (3.0, 8.0)
     finally:
         fetcher.close()
+
+
+def test_login_complete_detection() -> None:
+    from app.crawlers.login import SITES, login_complete
+
+    site = SITES["facebook"]
+    assert login_complete(site, {"c_user", "xs"}, "https://www.facebook.com/")
+    assert not login_complete(site, {"datr"}, "https://www.facebook.com/")
+    assert not login_complete(site, {"c_user"}, "https://www.facebook.com/checkpoint/123/")
+    assert not login_complete(site, {"c_user"}, "https://www.facebook.com/two_step_verification/x")
