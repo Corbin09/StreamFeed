@@ -10,6 +10,16 @@ Level = Literal["intern", "fresher", "junior", "mid", "senior", "lead", "manager
 WorkMode = Literal["onsite", "hybrid", "remote"]
 
 
+class Comment(BaseModel):
+    """A comment under a post (Facebook groups), as shown on the page."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    author: str | None = None
+    text: str
+    posted_at: str | None = None  # ISO 8601
+
+
 class JobAttributes(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -36,3 +46,5 @@ class JobAttributes(BaseModel):
     expertise: str | None = Field(None, json_schema_extra={"filter": "Expertise"})
     experience_months: int | None = None
     valid_through: str | None = None  # ISO date the source says the post expires
+    # Comments shown under the post (Facebook groups), at most 10.
+    comments: list[Comment] = Field(default_factory=list, max_length=10)

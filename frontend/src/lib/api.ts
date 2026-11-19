@@ -17,6 +17,8 @@ export type JobAttributes = {
   expertise?: string;
   experience_months?: number;
   valid_through?: string;
+  /** Comments shown under the post (Facebook groups), at most 10. */
+  comments?: { author: string | null; text: string; posted_at: string | null }[];
   [key: string]: unknown;
 };
 

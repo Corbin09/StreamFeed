@@ -106,6 +106,30 @@ function Detail({ post, rate }: { post: PostDetail; rate: number }) {
             <p className="text-muted">This post has no description. Open it on the source site.</p>
           )}
         </div>
+
+        {a.comments && a.comments.length > 0 && (
+          <section className="mt-10 max-w-[68ch] border-t border-line pt-6">
+            <h2 className="text-lg font-semibold">
+              Comments <span className="font-normal text-faint tabular">{a.comments.length}</span>
+            </h2>
+            <p className="mt-1 text-sm text-muted">The comments that were visible under the post when it was read.</p>
+            <ul className="mt-4 space-y-4">
+              {a.comments.map((c, i) => (
+                <li key={i} className="text-[15px]" lang={post.language ?? undefined}>
+                  <p className="text-sm">
+                    <span className="font-semibold">{c.author ?? "Unknown"}</span>
+                    {c.posted_at && (
+                      <span className="ml-2 text-faint" title={fullDate(c.posted_at)}>
+                        {timeAgo(c.posted_at)}
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-0.5 whitespace-pre-line leading-relaxed">{c.text}</p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
 
       <aside className="mt-10 lg:mt-0">

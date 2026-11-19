@@ -23,7 +23,24 @@
      "label": "Thứ Năm, 19 Tháng 11, 2026 lúc 07:15"
     }
    ],
-   "html": "<div role=\"article\">...</div>"
+   "post_ids": [],
+   "comments": [
+    {
+     "author": "Tran Thi B",
+     "text": "Tran Thi B\nem gửi CV qua mail rồi ạ",
+     "time": "Thứ Năm, 19 Tháng 11, 2026 lúc 08:30"
+    },
+    {
+     "author": "Le Van C",
+     "text": "check ib",
+     "time": "1 giờ"
+    },
+    {
+     "author": "Pham D",
+     "text": "",
+     "time": "2 giờ"
+    }
+   ]
   },
   {
    "text": "We're hiring a Frontend (React) Engineer - Remote\nSalary up to $2,000\nApply: jobs@example.com",
@@ -35,7 +52,8 @@
      "label": "5 giờ"
     }
    ],
-   "html": "<div role=\"article\">...</div>"
+   "post_ids": [],
+   "comments": []
   },
   {
    "text": "Mọi người cho em hỏi học Java hay Go thì dễ xin việc hơn ạ?",
@@ -47,19 +65,24 @@
      "label": ""
     }
    ],
-   "html": "<div role=\"article\">...</div>"
+   "post_ids": [],
+   "comments": []
   },
   {
    "text": "Tuyển dụng Tester (QA) tại TP.HCM, ứng tuyển qua link",
    "author": "HR D",
    "links": [],
-   "html": "<div role=\"article\">...</div>"
+   "post_ids": [
+    "555666777"
+   ],
+   "comments": []
   },
   {
    "text": "",
    "author": "E",
    "links": [],
-   "html": "<div></div>"
+   "post_ids": [],
+   "comments": []
   }
  ]
 }

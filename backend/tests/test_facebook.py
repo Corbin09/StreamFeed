@@ -112,8 +112,15 @@ def test_parse_saved_group_page() -> None:
     assert second.salary_raw == "Salary up to $2,000"
 
     assert question.posted_at == NOW
-    assert no_link.external_id.startswith(f"{GROUP}:h")
-    assert no_link.url == group_url(GROUP)
+    # No permalink link, but the id was found in a photo link.
+    assert no_link.external_id == f"{GROUP}:555666777"
+    assert no_link.url == f"https://www.facebook.com/groups/{GROUP}/posts/555666777/"
+
+    comments = first.extra["comments"]
+    assert [c["text"] for c in comments] == ["em gửi CV qua mail rồi ạ", "check ib"]
+    assert comments[0]["author"] == "Tran Thi B"
+    assert comments[0]["posted_at"] == "2026-11-19T08:30:00+07:00"
+    assert comments[1]["posted_at"] == (NOW - timedelta(hours=1)).isoformat()
 
 
 def test_pipeline_keeps_hiring_posts_and_normalizes_them() -> None:
@@ -226,3 +233,19 @@ def test_page_scripts_are_valid_javascript(tmp_path) -> None:
 )
 def test_salary_line(text, line) -> None:
     assert salary_line(text) == line
+
+
+def test_comments_are_stored_with_the_job() -> None:
+    first = FacebookCrawler().parse(sample_page())[0]
+    attributes = build_row(1, "job", first)["attributes"]
+    assert [c["text"] for c in attributes["comments"]] == ["em gửi CV qua mail rồi ạ", "check ib"]
+
+
+def test_post_key_falls_back_to_saved_html_and_text_hash() -> None:
+    from app.crawlers.facebook import post_key
+
+    legacy = {"text": "x", "html": '<a href="/groups/1/posts/42/?comment_id=7">'}
+    assert post_key(legacy) == ("42", None)
+    a = post_key({"author": "A", "text": "Tuyển dev " + "x" * 200})
+    b = post_key({"author": "A", "text": "Tuyển dev " + "x" * 200 + " Xem thêm"})
+    assert a == b and a[0].startswith("h")  # "See more" does not change the key

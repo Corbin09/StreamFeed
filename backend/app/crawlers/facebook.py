@@ -9,8 +9,8 @@ How a run works:
    newest posts, then scrolls slowly (3-8 s pauses) until `max_posts_per_group` posts are
    collected or `max_scrolls` is reached, pausing 20-60 s between groups. "See more" is
    expanded so long posts are complete.
-3. Posts are read from the rendered page in the browser (text, author, permalink, time
-   label, plus the article HTML for re-parsing) and saved as one JSON page per group.
+3. Posts are read from the rendered page in the browser (text, author, links, post ids and
+   up to 10 of the comments already shown) and saved as one JSON page per group.
    `parse()` turns that JSON into RawPosts, so parser fixes apply with `reparse`.
 4. A login form, checkpoint, two-factor or "temporarily blocked" page raises NeedsLogin at
    once: the source moves to `needs_login` and is never retried until a new login.
@@ -50,6 +50,7 @@ from app.pipeline.text import fold
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.facebook.com"
+MAX_COMMENTS = 10  # comments kept per post, from those Facebook already shows
 SESSION_FILE = "sessions/facebook.json"
 TITLE_CHARS = 140
 
@@ -115,15 +116,43 @@ _EXTRACT_JS = """
       .map((l) => ({
         href: l.href, text: (l.innerText || '').trim(), label: l.getAttribute('aria-label') || '',
       }));
+    // Post ids still appear in comment links (/posts/<id>/?comment_id=) and photo links
+    // (set=gm.<id>), even though the post's own permalink is hidden.
+    const postIds = [...unit.querySelectorAll('a[href]')]
+      .map((l) => {
+        const m = l.href.match(/\/groups\/[^/?#]+\/(?:posts|permalink)\/(\d+)/)
+          || l.href.match(/[?&]set=gm\.(\d+)/);
+        return m ? m[1] : null;
+      })
+      .filter(Boolean);
+    // Comments already shown under the post (top level only), at most MAX_COMMENTS.
+    const comments = [...unit.querySelectorAll('[role="article"]')]
+      .filter((a) => !a.parentElement.closest('[role="article"]'))
+      .slice(0, MAX_COMMENTS)
+      .map((a) => {
+        const who = a.querySelector('a[href*="/user/"]:not(:empty), a[role="link"] span');
+        const when = a.querySelector('a[href*="comment_id="]');
+        const blocks = [...a.querySelectorAll('div[dir="auto"]')]
+          .filter((el) => !el.querySelector('div[dir="auto"]'))
+          .map((el) => (el.innerText || '').trim())
+          .filter(Boolean);
+        return {
+          author: who ? (who.innerText || '').trim() : '',
+          text: blocks.join(String.fromCharCode(10)),
+          time: when ? ((when.getAttribute('aria-label') || when.innerText || '').trim()) : '',
+        };
+      })
+      .filter((c) => c.text);
     return {
       text,
       author: author ? (author.innerText || '').trim() : '',
       links: links.slice(0, 40),
-      html: unit.outerHTML.slice(0, 120000),
+      post_ids: postIds,
+      comments,
     };
   }).filter((post) => post.text || post.links.length);
 }
-"""
+""".replace("MAX_COMMENTS", str(MAX_COMMENTS))
 
 _POST_ID = re.compile(r"/groups/[^/?#]+/(?:posts|permalink)/([A-Za-z0-9]+)")
 _MULTI_PERMALINK = re.compile(r"[?&]multi_permalinks=(\d+)")
@@ -231,7 +260,10 @@ def post_key(item: dict) -> tuple[str, str | None]:
     post_id, permalink = _post_id(item.get("links") or [])
     if post_id:
         return post_id, permalink
-    html = item.get("html") or ""
+    found = Counter(item.get("post_ids") or []).most_common(1)
+    if found:
+        return found[0][0], None
+    html = item.get("html") or ""  # runs saved before post_ids existed
     for pattern in (_HTML_POST_ID, _PHOTO_SET_ID):
         found = Counter(pattern.findall(html)).most_common(1)
         if found:
@@ -438,6 +470,26 @@ class FacebookCrawler(BaseCrawler):
                     salary_raw=salary_line(text),
                     work_mode_raw=_line_matching(text, _WORK_MODE_LINE),
                     posted_at=self._posted_at(_time_labels(links, permalink), page.fetched_at),
+                    extra={"comments": self._comments(item, page.fetched_at)},
                 )
+            )
+        return out
+
+    def _comments(self, item: dict, fetched_at: datetime) -> list[dict]:
+        out = []
+        for comment in (item.get("comments") or [])[:MAX_COMMENTS]:
+            text = (comment.get("text") or "").strip()
+            author = (comment.get("author") or "").strip()
+            if text.startswith(author + "\n"):
+                text = text[len(author) + 1 :].strip()  # the name is also a text block
+            if not text:
+                continue
+            when = self._posted_at([comment.get("time") or ""], fetched_at)
+            out.append(
+                {
+                    "author": author[:255] or None,
+                    "text": text[:2000],
+                    "posted_at": when.isoformat() if when else None,
+                }
             )
         return out
