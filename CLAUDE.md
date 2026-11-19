@@ -37,6 +37,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m app.seed                                   # upsert data/seeds/sources.yaml
 .venv/bin/python -m app.crawlers list|run <source>|reparse <run_id>  # crawler CLI
 .venv/bin/python -m app.worker                                 # worker loop (Ctrl+C stops after the current crawl)
+.venv/bin/python -m app.crawlers.login facebook --browser-path /usr/bin/brave-browser  # headed login, saves data/sessions/facebook.json
 
 # Frontend (run from frontend/)
 npm install
@@ -101,6 +102,7 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
   - Design tokens are CSS variables in `src/app/globals.css` (light + dark). Font: Be Vietnam Pro with the Vietnamese subset.
 - **ITviec plugin** (`app/crawlers/itviec.py`): fetches listing cards, then detail pages (JSON-LD `JobPosting`); `external_id` is the job slug. Parser tests use trimmed real pages in `tests/fixtures/itviec/`. When ITviec changes its markup, save a fresh page there and update the fixtures.
 - **BrowserFetcher** (`app/crawlers/fetchers.py`): Playwright Chrome, one tab, same `get()` contract as `HttpFetcher`. The worker image installs Google Chrome stable (`BROWSER_CHANNEL=chrome`); `BROWSER_EXECUTABLE_PATH` picks another Chromium-based binary.
+- **Facebook plugin** (`app/crawlers/facebook.py`): logged-in groups crawler (secondary account), once a day. `fetch` drives the browser and saves one JSON page per group (posts read in the page by `_EXTRACT_JS`); `parse` works on that JSON only. Login/checkpoint/block pages raise `NeedsLogin` (never retried). Sessions come from `app/crawlers/login.py` (headed browser on the host, `c_user` cookie check, file mode 0600, resets the source to `idle`). The test fixture is synthetic until a real run is saved.
 - **LinkedIn:** a guest crawler was built and dropped (LinkedIn returns 429 to automated clients); see ARCHITECTURE.md "Source plugins".
 - **Daily windows** (`app/scheduling.py`): a source with `config.daily_window = "HH:MM-HH:MM"` runs once a day at a stable random minute in that window (`TIMEZONE`, default Asia/Ho_Chi_Minh), used by the worker and reported by the API as `daily_window`/`next_run_at`. Failures skip 2/4/8 days.
 - **Test helpers:** use the `session_factory` fixture (real commits, tables truncated afterwards) for code that manages its own sessions. Fake crawlers are registered on a local `CrawlerRegistry` (see `tests/test_runner.py`).

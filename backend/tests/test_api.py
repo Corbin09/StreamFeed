@@ -283,7 +283,7 @@ def test_patch_post_saves_and_hides(db, client) -> None:
 
 def test_list_sources_with_last_run_and_counts(db, client) -> None:
     itviec = add_source(db, config={"pages": 3})
-    add_source(db, "facebook", enabled=False)
+    add_source(db, "noplugin", enabled=False)
     add_post(db, itviec, "Job")
     db.add(CrawlRun(source_id=itviec.id, status=CrawlRunStatus.SUCCESS))
     db.commit()
@@ -291,7 +291,7 @@ def test_list_sources_with_last_run_and_counts(db, client) -> None:
     db.commit()
 
     body = client.get("/sources").json()
-    assert [s["type"] for s in body] == ["itviec", "facebook"]
+    assert [s["type"] for s in body] == ["itviec", "noplugin"]
     first, second = body
     assert first["post_count"] == 1
     assert first["last_run"]["status"] == "failed"
@@ -299,7 +299,7 @@ def test_list_sources_with_last_run_and_counts(db, client) -> None:
     assert first["category"] == "job"
     assert first["config"] == {"pages": 3}
     assert second["last_run"] is None
-    assert second["plugin_available"] is False  # no Facebook plugin yet
+    assert second["plugin_available"] is False  # unknown type
     assert (first["daily_window"], first["next_run_at"]) == (None, None)
     assert client.get(f"/sources/{itviec.id}").json()["id"] == itviec.id
     assert client.get("/sources/9999").status_code == 404
@@ -352,7 +352,7 @@ def test_run_now_queues_once(db, client) -> None:
 def test_run_now_refuses_needs_login_and_missing_plugin(db, client) -> None:
     blocked = add_source(db, status=SourceStatus.NEEDS_LOGIN)
     assert client.post(f"/sources/{blocked.id}/run").status_code == 409
-    no_plugin = add_source(db, "facebook")
+    no_plugin = add_source(db, "noplugin")
     response = client.post(f"/sources/{no_plugin.id}/run")
     assert response.status_code == 409
     assert "plugin" in response.json()["detail"]

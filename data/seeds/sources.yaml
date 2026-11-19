@@ -14,8 +14,11 @@ sources:
 
   - type: facebook
     name: Facebook - IT job groups
-    enabled: false          # no crawler yet (deferred; see ARCHITECTURE.md §18)
-    interval_minutes: 180
+    enabled: false          # enable after `python -m app.crawlers.login facebook` and adding groups
+    interval_minutes: 1440  # once a day; the run time comes from daily_window
     config:
-      groups: []            # group URLs or IDs
-      max_posts_per_run: 50
+      groups: []            # group URLs, ids or slugs, e.g. "https://www.facebook.com/groups/123456"
+      max_posts_per_group: 30
+      max_scrolls: 12       # scroll steps per group (3-8 s apart)
+      max_posts_per_run: 150
+      daily_window: "07:00-09:00"  # local time (TIMEZONE), random minute each day

@@ -1,0 +1,65 @@
+{
+ "_note": "Synthetic sample in the format FacebookCrawler.fetch saves; replace with a trimmed real page after the first live run.",
+ "group": "123456789",
+ "url": "https://www.facebook.com/groups/123456789/?sorting_setting=CHRONOLOGICAL",
+ "posts": [
+  {
+   "text": "[HN] Tuyển Senior Python Developer\nCông ty ABC tuyển 2 bạn Python/Django.\nLương: 25-35 triệu\nHybrid, 3 ngày ở văn phòng Cầu Giấy, Hà Nội\nGửi CV qua email.",
+   "article_text": "Nguyen Van A\n2h\n[HN] Tuyển Senior Python Developer ...",
+   "author": "Nguyen Van A",
+   "links": [
+    {
+     "href": "https://www.facebook.com/nguyenvana",
+     "text": "Nguyen Van A",
+     "label": ""
+    },
+    {
+     "href": "https://www.facebook.com/groups/123456789/posts/987654321/?__cft__=x",
+     "text": "2h",
+     "label": ""
+    }
+   ],
+   "html": "<div role=\"article\">...</div>"
+  },
+  {
+   "text": "We're hiring a Frontend (React) Engineer - Remote\nSalary up to $2,000\nApply: jobs@example.com",
+   "article_text": "Tran B\n5 giờ\nWe're hiring ...",
+   "author": "Tran B",
+   "links": [
+    {
+     "href": "https://www.facebook.com/groups/123456789/permalink/111222333/",
+     "text": "",
+     "label": "5 giờ"
+    }
+   ],
+   "html": "<div role=\"article\">...</div>"
+  },
+  {
+   "text": "Mọi người cho em hỏi học Java hay Go thì dễ xin việc hơn ạ?",
+   "article_text": "Le C\nJust now\n...",
+   "author": "Le C",
+   "links": [
+    {
+     "href": "https://www.facebook.com/groups/123456789/posts/444555666/",
+     "text": "Just now",
+     "label": ""
+    }
+   ],
+   "html": "<div role=\"article\">...</div>"
+  },
+  {
+   "text": "Tuyển dụng Tester (QA) tại TP.HCM, ứng tuyển qua link",
+   "article_text": "...",
+   "author": "HR D",
+   "links": [],
+   "html": "<div role=\"article\">...</div>"
+  },
+  {
+   "text": "",
+   "article_text": "Photo only",
+   "author": "E",
+   "links": [],
+   "html": "<div></div>"
+  }
+ ]
+}
