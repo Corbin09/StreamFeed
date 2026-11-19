@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields, replace
 from typing import Any
 
@@ -144,13 +144,15 @@ def process_posts(
     posts: Sequence[RawPost],
     *,
     filter_non_jobs: bool = False,
+    is_hiring: Callable[[str], bool] = is_hiring_post,
 ) -> IngestResult:
     """Normalize and upsert a batch of RawPosts, then link cross-source duplicates.
-    Does not commit."""
+    With `filter_non_jobs`, posts rejected by `is_hiring` (the runner passes a
+    `HiringFilter`: local LLM, then contact rules) are skipped. Does not commit."""
     result = IngestResult()
     rows: dict[str, dict[str, Any]] = {}
     for raw in posts:
-        if filter_non_jobs and not is_hiring_post(f"{raw.title}\n{raw.body}"):
+        if filter_non_jobs and not is_hiring(f"{raw.title}\n{raw.body}"):
             result.skipped += 1
             continue
         try:

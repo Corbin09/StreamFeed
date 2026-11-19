@@ -118,7 +118,10 @@ def test_invalid_attributes_are_skipped(session: Session) -> None:
 
 def test_non_hiring_posts_filtered_for_mixed_sources(session: Session) -> None:
     sid = make_source(session, "facebook")
-    posts = [raw("1", "Cần tuyển dev PHP gấp"), raw("2", "Có ai đi cafe cuối tuần không?")]
+    posts = [
+        raw("1", "Cần tuyển dev PHP gấp, lh 0912345678"),
+        raw("2", "Có ai đi cafe cuối tuần không?"),
+    ]
     result = process_posts(session, sid, "job", posts, filter_non_jobs=True)
     assert (result.inserted, result.skipped) == (1, 1)
 

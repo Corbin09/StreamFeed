@@ -100,9 +100,13 @@ def test_language(text, expected) -> None:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("Cần tuyển gấp 2 bạn dev PHP, gửi CV qua inbox", True),
-        ("We're hiring a QA engineer", True),
-        ("JD: Senior Java Developer", True),
+        # Contact rules (the fallback when the LLM is off): one strong signal, or weak
+        # signals from two groups.
+        ("Cần tuyển gấp 2 bạn dev PHP, lh 0912 345 678", True),
+        ("We're hiring a QA engineer, send your CV to jobs@example.com", True),
+        ("Tuyen BA, apply: https://forms.gle/abc123", True),
+        ("tuyen dev php, lam viec tai Cau Giay, ib zalo", True),
+        ("We're hiring a QA engineer", False),  # no way to reach the employer
         ("Có ai biết quán cafe nào yên tĩnh ở Cầu Giấy không?", False),
         ("Bán bàn phím cơ cũ, giá 500k", False),
     ],

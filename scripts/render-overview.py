@@ -124,9 +124,9 @@ stacked_box(860, 300, 210, 64, "Source Sites", "ITviec · Facebook groups")
 
 # Worker frame
 add(f'<rect x="40" y="660" width="830" height="300" rx="12" fill="none" stroke="{ORANGE_D}" stroke-width="1.5" stroke-dasharray="8,6"/>')
-add('<text x="62" y="690" class="frame">Worker</text>')
+add('<text x="790" y="690" class="frame">Worker</text>')
 
-box(80, 730, 200, 54, "Pipeline", "normalize · dedup")
+box(80, 730, 200, 54, "Pipeline", "filter · normalize · dedup")
 box(370, 730, 200, 54, "Crawl Runner", "lock · run · record")
 stacked_box(650, 740, 200, 54, "Crawler Plugins", "httpx · Playwright")
 
@@ -134,9 +134,14 @@ arrow([(370, 757), (280, 757)])
 label(325, 745, "RawPost[]")
 arrow([(570, 757), (630, 757)])
 
+# Local LLM (Ollama) used by the pipeline's hiring filter
+box(50, 400, 200, 54, "Local LLM", "Ollama · VyLinh 3B")
+arrow([(120, 730), (120, 454)], both=True)
+label(110, 560, "hiring|post?", anchor="end")
+
 # Pipeline -> Postgres
 arrow([(180, 730), (180, 600), (380, 600)])
-label(168, 622, "Upsert +|dedup", anchor="end")
+label(192, 622, "Upsert +|dedup", anchor="start")
 # Runner <-> Postgres (claim queued runs, locks)
 arrow([(470, 730), (470, 600)], both=True)
 label(482, 622, "Claim runs ·|advisory lock", anchor="start")

@@ -55,17 +55,41 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-streamfeed}:${POSTGRES_PASSWORD:-streamfeed}@postgres:5432/${POSTGRES_DB:-streamfeed}
       DATA_DIR: /data
+      # Hiring filter for Facebook posts. If Ollama is down, the contact rules decide.
+      LLM_URL: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-hf.co/QuantFactory/Arcee-VyLinh-GGUF:Q4_K_M}
     volumes:
       - ./data:/data
     depends_on:
       # The API container applies migrations; wait until it is up.
       backend:
         condition: service_healthy
+      ollama:
+        condition: service_started
     # Let an in-flight crawl finish on `docker compose stop`; an interrupted run is marked
     # failed by the next worker start (orphan recovery).
     stop_grace_period: 2m
     # Chromium needs more shared memory than Docker's 64 MB default.
     shm_size: 512m
+
+  # Local LLM (Ollama, CPU) that decides which Facebook group posts are hiring posts
+  # (backend/app/pipeline/llm.py). Pulls LLM_MODEL (~1.9 GB) into the `ollama` volume on the
+  # first start; the model stays in RAM (~2.5 GB) for 10 minutes after the last post.
+  ollama:
+    image: ollama/ollama:0.40.16
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -c
+      - ollama serve & until ollama list >/dev/null 2>&1; do sleep 1; done; ollama pull "$$LLM_MODEL"; wait
+    environment:
+      LLM_MODEL: ${LLM_MODEL:-hf.co/QuantFactory/Arcee-VyLinh-GGUF:Q4_K_M}
+      OLLAMA_KEEP_ALIVE: 10m
+    ports:
+      # Loopback only, for dry runs from the host (LLM_URL=http://127.0.0.1:11434).
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama:/root/.ollama
 
   # Next.js UI. The browser only talks to this service; /api/* is proxied to the backend.
   frontend:
@@ -86,3 +110,4 @@ services:
 
 volumes:
   pgdata:
+  ollama:

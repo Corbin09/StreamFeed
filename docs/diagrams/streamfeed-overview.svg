@@ -51,10 +51,10 @@
 <text x="965.0" y="328.0" class="t">Source Sites</text>
 <text x="965.0" y="348.0" class="s">ITviec · Facebook groups</text>
 <rect x="40" y="660" width="830" height="300" rx="12" fill="none" stroke="#E39B2B" stroke-width="1.5" stroke-dasharray="8,6"/>
-<text x="62" y="690" class="frame">Worker</text>
+<text x="790" y="690" class="frame">Worker</text>
 <rect x="80" y="730" width="200" height="54" fill="#F9B54C" stroke="#E39B2B" stroke-width="1.5"/>
 <text x="180.0" y="753.0" class="t">Pipeline</text>
-<text x="180.0" y="773.0" class="s">normalize · dedup</text>
+<text x="180.0" y="773.0" class="s">filter · normalize · dedup</text>
 <rect x="370" y="730" width="200" height="54" fill="#F9B54C" stroke="#E39B2B" stroke-width="1.5"/>
 <text x="470.0" y="753.0" class="t">Crawl Runner</text>
 <text x="470.0" y="773.0" class="s">lock · run · record</text>
@@ -66,9 +66,15 @@
 <path d="M370,757 L280,757" fill="none" stroke="#4A4A4A" stroke-width="1.6" marker-end="url(#ah)"/>
 <text x="325" y="745" class="lbl" text-anchor="middle">RawPost[]</text>
 <path d="M570,757 L630,757" fill="none" stroke="#4A4A4A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="50" y="400" width="200" height="54" fill="#F9B54C" stroke="#E39B2B" stroke-width="1.5"/>
+<text x="150.0" y="423.0" class="t">Local LLM</text>
+<text x="150.0" y="443.0" class="s">Ollama · VyLinh 3B</text>
+<path d="M120,730 L120,454" fill="none" stroke="#4A4A4A" stroke-width="1.6" marker-start="url(#ah)" marker-end="url(#ah)"/>
+<text x="110" y="560" class="lbl" text-anchor="end">hiring</text>
+<text x="110" y="582" class="lbl" text-anchor="end">post?</text>
 <path d="M180,730 L180,600 L380,600" fill="none" stroke="#4A4A4A" stroke-width="1.6" marker-end="url(#ah)"/>
-<text x="168" y="622" class="lbl" text-anchor="end">Upsert +</text>
-<text x="168" y="644" class="lbl" text-anchor="end">dedup</text>
+<text x="192" y="622" class="lbl" text-anchor="start">Upsert +</text>
+<text x="192" y="644" class="lbl" text-anchor="start">dedup</text>
 <path d="M470,730 L470,600" fill="none" stroke="#4A4A4A" stroke-width="1.6" marker-start="url(#ah)" marker-end="url(#ah)"/>
 <text x="482" y="622" class="lbl" text-anchor="start">Claim runs ·</text>
 <text x="482" y="644" class="lbl" text-anchor="start">advisory lock</text>

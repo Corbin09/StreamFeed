@@ -62,6 +62,7 @@ flowchart TB
         api["api<br/>FastAPI"]
         worker["worker<br/>scheduler + crawlers + pipeline<br/>(backend image)"]
         db[("postgres<br/>PostgreSQL 16")]
+        llm["ollama<br/>local LLM (CPU)"]
         vol[/"data/ volume<br/>raw/ · sessions/ · seeds/ · backups/"/]
     end
     user([User]) --> fe
@@ -71,6 +72,7 @@ flowchart TB
     worker -- "write raw pages,<br/>read sessions" --> vol
     api -- "read seeds" --> vol
     worker -- "HTTP / browser" --> ext[(Source sites)]
+    worker -- "is this a hiring post?" --> llm
 ```
 
 | Container | Tech | Responsibility |
@@ -79,6 +81,7 @@ flowchart TB
 | `api` | FastAPI, SQLAlchemy | Search, CRUD, admin, enqueue manual runs. Runs migrations + seed on start. **Never crawls.** |
 | `worker` | Same backend codebase, `python -m app.worker`, Dockerfile target `worker` (adds Google Chrome for BrowserFetcher). | Scheduling, crawling, pipeline, housekeeping. |
 | `postgres` | PostgreSQL 16 + `unaccent`, `pg_trgm` | System of record **and** the job queue. |
+| `ollama` | Ollama, CPU only, model Arcee-VyLinh 3B (Q4_K_M) | Answers "is this a hiring post?" for Facebook group posts. Optional: when it is down the worker uses contact rules. |
 | `data/` | Bind-mounted directory | Raw pages, login sessions, seed files, DB backups. |
 
 ### Key decisions
@@ -371,9 +374,20 @@ Posts parsed earlier in the interrupted run are not ingested. Their pages are al
 | **merge** | RawPosts → one per `external_id` | A source may emit the same post from several pages (ITviec: listing card + detail page). The first non-empty value of each field wins and later pages only fill gaps, so crawlers yield their most precise page first. |
 | **language** | text → `vi` / `en` / null | lingua restricted to {Vietnamese, English}; null if the text is under 20 characters. |
 | **normalize** | raw strings → typed fields | See below. |
-| **classify** | post → `category` | Source default (job sources → `job`). Mixed Facebook groups: drop posts that are not hiring posts, using keywords such as `tuyển`, `tuyen dung`, `hiring`, `JD`, `we are looking`. |
+| **classify** | post → `category` | Source default (job sources → `job`). Mixed Facebook groups (`filter_non_jobs`): drop posts that are not hiring posts (see "Hiring filter" below). |
 | **validate** | `attributes` → validated dict | Pydantic schema per category; unknown keys are dropped, and invalid posts are logged and skipped. |
 | **dedup + upsert** | post → DB row | See below. |
+
+### Hiring filter (Facebook groups)
+
+Group posts mix job offers with job seekers, course ads, questions and chatter, and are often written without diacritics, with typos or chat shorthand (`tuyn dev, lh e, ib`). Keyword lists miss those, so a local LLM decides (`app/pipeline/llm.py`, `HiringFilter` in `app/pipeline/classify.py`):
+
+1. **Local LLM** (`LLM_URL`, the `ollama` service). The post (first 800 characters) goes to Ollama's `/api/chat` with a system prompt, five labelled examples (job seeker, course ad, question, two offers) and a JSON schema that only allows `{"hiring": true|false}`; temperature 0.
+2. **Contact rules** (fallback, also used when `LLM_URL` is empty): keep the post if it has a phone number, an email or an application link, or contact words from two groups (contact, channel, how to apply, place).
+
+After the first LLM failure (server down, model missing, timeout, bad reply) the rest of the run uses the rules, so a dead server costs one timeout. The runner logs how many posts each method decided.
+
+Model choice (Nov 2026, 4-core Haswell CPU, no usable GPU): six small Ollama models were tested on 21 real group posts, the same posts accent-stripped with typos, and 12 hand-written teencode posts (54 cases, no reasoning output). Arcee-VyLinh 3B (Qwen2.5-3B, Vietnamese fine-tune, 1.9 GB) scored 51/54 at ~8 s/post; `qwen2.5:1.5b` 48/54 (calls job seekers hiring), `qwen3:1.7b` 42/54, `gemma3:1b` 39/54, `sailor2:1b` 44/54 (says "hiring" to everything), `qwen3.5:0.8b` 12/54. Reading the prompt dominates CPU time, which is why the post is truncated and no reason is generated. With the five examples in the prompt (the fixed prefix is cached by Ollama), the shipped classifier scores 52/54 at ~4.8 s/post; both misses are accent-stripped, misspelled versions of non-hiring posts (an opinion post and a job seeker).
 
 ### Normalization (bilingual)
 
@@ -537,7 +551,7 @@ Code: `app/api/routes/*` (routers), `app/api/schemas.py` (models), `app/services
 **Add a category:**
 1. Add `app/schemas/attributes/<category>.py` (a Pydantic model; field metadata becomes the filter schema).
 2. Add the value to `Category` in `app/models/post.py`.
-3. Add normalizer dictionaries or classifier keywords if needed.
+3. Add normalizer dictionaries if needed; a mixed source sets `filter_non_jobs` to use the hiring filter.
 4. No migration and no frontend change are needed; the tab and filters come from `/meta/categories`.
 
 ---
@@ -566,6 +580,7 @@ flowchart LR
         api[api :8000]
         wk[worker]
         pg[(postgres :5432)]
+        ol[ollama :11434]
         data[/./data/]
     end
     user([User]) -- HTTPS --> edge["ngrok / Cloudflare Tunnel / Caddy"] --> fe
@@ -574,9 +589,11 @@ flowchart LR
     wk --> pg
     api --> data
     wk -- rw --> data
+    wk --> ol
 ```
 
-- **Compose services:** `postgres`, `backend` (the API), `worker`, `frontend`.
+- **Compose services:** `postgres`, `backend` (the API), `worker`, `frontend`, `ollama`.
+  - `ollama` (image pinned) pulls `LLM_MODEL` into the `ollama` volume on first start (~1.9 GB) and keeps it in RAM (~2.5 GB) for 10 minutes after the last request, so the memory is only used during Facebook runs. Its port is on `127.0.0.1` in dev and closed in prod.
   - `backend` runs `alembic upgrade head` and `app.seed` on start and has a `/health` healthcheck.
   - `worker` and `frontend` wait for `backend` to be healthy; the worker never migrates.
 - **One public entry point.** The browser only talks to the frontend origin. `next.config.ts` rewrites `/api/*` to `API_INTERNAL_URL` (`http://backend:8000`, fixed at image build time), so the API needs no public port, no CORS, and the image does not depend on the public hostname.
@@ -654,6 +671,7 @@ flowchart LR
 | Playwright `storage_state` JSON | Portable between host (headed login) and container (headless). | Persistent Chromium profile |
 | Raw pages persisted to disk | Re-parse after parser fixes without re-crawling (protects accounts). | Parse-and-discard |
 | REST + React Query, filters in URL | Simple, cacheable, bookmarkable. | GraphQL |
+| Local LLM (Ollama, Arcee-VyLinh 3B) as the Facebook hiring filter, contact rules as fallback | Understands unaccented, misspelled and teencode Vietnamese; no data leaves the machine; free. | Keyword lists (miss typos, catch job seekers); a hosted LLM API (cost, sends group members' posts out) |
 
 ---
 

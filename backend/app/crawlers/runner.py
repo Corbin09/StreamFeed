@@ -15,6 +15,7 @@ from app.crawlers.raw_store import RawStore
 from app.crawlers.registry import CrawlerRegistry, load_builtin_crawlers
 from app.db import SessionLocal
 from app.models import CrawlRun, CrawlRunStatus, CrawlRunTrigger, Source, SourceStatus
+from app.pipeline.classify import HiringFilter
 from app.pipeline.ingest import IngestResult, merge_raw_posts, process_posts
 
 logger = logging.getLogger(__name__)
@@ -187,17 +188,29 @@ class CrawlRunner:
         self, info: SourceInfo, crawler: BaseCrawler, posts: list[RawPost], result: RunResult
     ) -> None:
         total = IngestResult()
-        with self.session_factory() as session:
-            for start in range(0, len(posts), INGEST_BATCH_SIZE):
-                batch = posts[start : start + INGEST_BATCH_SIZE]
-                total += process_posts(
-                    session,
-                    info.id,
-                    crawler.category,
-                    batch,
-                    filter_non_jobs=crawler.filter_non_jobs,
-                )
-                session.commit()
+        hiring = HiringFilter.from_settings() if crawler.filter_non_jobs else HiringFilter()
+        try:
+            with self.session_factory() as session:
+                for start in range(0, len(posts), INGEST_BATCH_SIZE):
+                    batch = posts[start : start + INGEST_BATCH_SIZE]
+                    total += process_posts(
+                        session,
+                        info.id,
+                        crawler.category,
+                        batch,
+                        filter_non_jobs=crawler.filter_non_jobs,
+                        is_hiring=hiring,
+                    )
+                    session.commit()
+        finally:
+            hiring.close()
+        if crawler.filter_non_jobs:
+            logger.info(
+                "Hiring filter for %s: %d posts decided by the LLM, %d by contact rules",
+                info.name,
+                hiring.by_llm,
+                hiring.by_rules,
+            )
         result.inserted, result.updated, result.skipped = (
             total.inserted,
             total.updated,

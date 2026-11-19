@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # or Chrome on the host for the headed login).
     browser_channel: str | None = None
     browser_executable_path: str | None = None
+    # Local LLM (Ollama) that decides which Facebook group posts are hiring posts. Empty
+    # LLM_URL turns it off and the contact rules in app/pipeline/classify.py decide.
+    # docker-compose.yml points the worker at its `ollama` service.
+    llm_url: str = ""
+    llm_model: str = "hf.co/QuantFactory/Arcee-VyLinh-GGUF:Q4_K_M"
+    llm_timeout_seconds: float = 120
     raw_retention_days: int = 30
     run_retention_days: int = 90
 
