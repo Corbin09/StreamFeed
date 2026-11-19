@@ -6,6 +6,7 @@ browser-driven fetch is exercised in live runs; here only its guard rails are te
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -15,11 +16,14 @@ from app.crawlers.facebook import (
     group_slug,
     group_url,
     is_blocked,
+    parse_full_date,
     parse_post_time,
+    salary_line,
 )
 from app.pipeline.classify import is_hiring_post
 from app.pipeline.ingest import build_row
 
+VN = ZoneInfo("Asia/Ho_Chi_Minh")
 FIXTURE = Path(__file__).parent / "fixtures" / "facebook" / "group_sample.json"
 NOW = datetime(2026, 11, 17, 9, 0, tzinfo=UTC)
 GROUP = "123456789"
@@ -100,7 +104,8 @@ def test_parse_saved_group_page() -> None:
     assert first.author == "Nguyen Van A"
     assert first.salary_raw == "Lương: 25-35 triệu"
     assert first.work_mode_raw.startswith("Hybrid")
-    assert first.posted_at == NOW - timedelta(hours=2)
+    # The comment link (comment_id) is skipped; the full-date label wins over "2 giờ".
+    assert first.posted_at == datetime(2026, 11, 19, 7, 15, tzinfo=VN)
 
     assert second.external_id == f"{GROUP}:111222333"
     assert second.posted_at == NOW - timedelta(hours=5)  # from the aria-label
@@ -172,3 +177,52 @@ def test_login_complete_detection() -> None:
     assert not login_complete(site, {"datr"}, "https://www.facebook.com/")
     assert not login_complete(site, {"c_user"}, "https://www.facebook.com/checkpoint/123/")
     assert not login_complete(site, {"c_user"}, "https://www.facebook.com/two_step_verification/x")
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("Thứ Năm, 19 Tháng 11, 2026 lúc 07:15", datetime(2026, 11, 19, 7, 15, tzinfo=VN)),
+        ("Thursday, November 19, 2026 at 7:15 PM", datetime(2026, 11, 19, 19, 15, tzinfo=VN)),
+        ("Thursday, November 19, 2026 at 12:05 AM", datetime(2026, 11, 19, 0, 5, tzinfo=VN)),
+        ("19 Tháng 11, 2026", datetime(2026, 11, 19, tzinfo=VN)),
+        ("2 giờ", None),
+    ],
+)
+def test_parse_full_date(label, expected) -> None:
+    assert parse_full_date(label, VN) == expected
+
+
+def test_page_scripts_are_valid_javascript(tmp_path) -> None:
+    """The in-page scripts live in Python strings; escape mistakes break them silently."""
+    import shutil
+    import subprocess
+
+    from app.crawlers.facebook import _EXPAND_JS, _EXTRACT_JS
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not installed")
+    for name, script in {"expand": _EXPAND_JS, "extract": _EXTRACT_JS}.items():
+        path = tmp_path / f"{name}.js"
+        path.write_text(f"const f = {script.strip()};\n", encoding="utf-8")
+        result = subprocess.run([node, "--check", str(path)], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("text", "line"),
+    [
+        ("Mô tả\nMức lương: 25–28M Gross.", "Mức lương: 25–28M Gross."),
+        ("THU NHẬP 18-25 triệu/tháng", "THU NHẬP 18-25 triệu/tháng"),
+        ("Rate: Up to 43M - outsource", "Rate: Up to 43M - outsource"),
+        ("Salary up to $2,000", "Salary up to $2,000"),
+        ("Viết code chất lượng cao, có test", None),
+        ("Tuyển Java từ 3 năm kinh nghiệm, 2-3 dự án", None),
+        ("Trợ cấp: 3tr - 5tr", None),
+        ("Lương hấp dẫn + thưởng quý\nLương: 20-30tr", "Lương: 20-30tr"),
+        ("Mức lương cạnh tranh", "Mức lương cạnh tranh"),
+    ],
+)
+def test_salary_line(text, line) -> None:
+    assert salary_line(text) == line

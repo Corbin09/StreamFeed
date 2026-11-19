@@ -33,10 +33,12 @@ import json
 import logging
 import random
 import re
+from collections import Counter
 from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from app.config import get_settings
 from app.crawlers.base import BaseCrawler, CrawlContext, NeedsLogin, RawPage, RawPost
@@ -75,25 +77,51 @@ _EXPAND_JS = """
 }
 """
 
+# Each child of the feed is one post. Since late 2026 the post itself is not a
+# [role="article"]; only its comments are, so everything inside an article is skipped.
 _EXTRACT_JS = """
 () => {
-  const articles = [...document.querySelectorAll('[role="feed"] [role="article"]')]
-    .filter((a) => !a.parentElement.closest('[role="article"]'));  // skip comments
-  return articles.map((a) => {
-    const message = a.querySelector(
-      '[data-ad-preview="message"], [data-ad-comet-preview="message"]');
-    const author = a.querySelector('h2 a, h3 a, h4 a, strong a, h2, h3');
-    const links = [...a.querySelectorAll('a[href]')].map((l) => ({
-      href: l.href, text: (l.innerText || '').trim(), label: l.getAttribute('aria-label') || ''
-    }));
+  const feed = document.querySelector('[role="feed"]');
+  if (!feed) return [];
+  const inComment = (el) => !!el.closest('[role="article"]');
+  return [...feed.children].map((unit) => {
+    const pick = (selectors) => {
+      for (const sel of selectors) {
+        for (const el of unit.querySelectorAll(sel)) { if (!inComment(el)) return el; }
+      }
+      return null;
+    };
+    const message = pick([
+      '[data-ad-rendering-role="story_message"]',
+      '[data-ad-preview="message"]',
+      '[data-ad-comet-preview="message"]',
+    ]);
+    let text = message ? (message.innerText || '').trim() : '';
+    if (!text) {
+      // Fallback: leaf text blocks outside comments.
+      text = [...unit.querySelectorAll('div[dir="auto"]')]
+        .filter((el) => !inComment(el) && !el.querySelector('div[dir="auto"]'))
+        .map((el) => (el.innerText || '').trim())
+        .filter(Boolean)
+        .join(String.fromCharCode(10));
+    }
+    const author = pick([
+      '[data-ad-rendering-role="profile_name"] a',
+      '[data-ad-rendering-role="profile_name"]',
+      'h2 a', 'h3 a', 'h4 a', 'strong a',
+    ]);
+    const links = [...unit.querySelectorAll('a[href]')]
+      .filter((l) => !inComment(l))
+      .map((l) => ({
+        href: l.href, text: (l.innerText || '').trim(), label: l.getAttribute('aria-label') || '',
+      }));
     return {
-      text: (message ? message.innerText : '').trim(),
-      article_text: (a.innerText || '').trim(),
+      text,
       author: author ? (author.innerText || '').trim() : '',
       links: links.slice(0, 40),
-      html: a.outerHTML.slice(0, 200000),
+      html: unit.outerHTML.slice(0, 120000),
     };
-  });
+  }).filter((post) => post.text || post.links.length);
 }
 """
 
@@ -118,9 +146,13 @@ _SHORT_UNITS = {
     "y": "years",
     "năm": "years",
 }
-_SALARY_LINE = re.compile(
-    r"(luong|salary|thu nhap|income|upto|up to|\$|usd|trieu|\d+\s*tr\b|\d+\s*m\b)", re.I
+# Salary lines in free text need a salary word (as a whole word: "chat luong" is "quality")
+# and an amount with a unit; "2-3 nam kinh nghiem" or "tro cap 3tr" are not salaries.
+_SALARY_WORD = re.compile(
+    r"(?<!chat )\b(luong|muc luong|salary|thu nhap|income|rate|offer|package|up ?to|upto)\b"
 )
+_AMOUNT_WITH_UNIT = re.compile(r"(\$\s*\d|\d[\d.,]*\s*(k|m|tr|trieu|million|usd|vnd|d|dong)\b)")
+_NEGOTIABLE = re.compile(r"\b(thoa thuan|canh tranh|hap dan|negotiable|competitive|attractive)\b")
 _WORK_MODE_LINE = re.compile(r"\b(remote|hybrid|onsite|on-site|lam tu xa|wfh)\b", re.I)
 
 
@@ -174,6 +206,8 @@ def parse_post_time(label: str, now: datetime) -> datetime | None:
 def _post_id(links: list[dict]) -> tuple[str | None, str | None]:
     for link in links:
         href = link.get("href") or ""
+        if "comment_id=" in href:
+            continue  # a link to a comment under the post
         match = _POST_ID.search(href) or _MULTI_PERMALINK.search(href)
         if match:
             clean = href.split("?")[0] if _POST_ID.search(href) else href
@@ -181,14 +215,72 @@ def _post_id(links: list[dict]) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _time_label(links: list[dict], permalink: str | None) -> str:
-    """The post's time is the text (or aria-label) of its permalink link."""
+_HTML_POST_ID = re.compile(r"/groups/[^/\"'?]+/(?:posts|permalink)/(\d+)")
+_PHOTO_SET_ID = re.compile(r"[?&](?:amp;)?set=gm\.(\d+)")
+KEY_PREFIX_CHARS = 120
+
+
+def post_key(item: dict) -> tuple[str, str | None]:
+    """Stable identity of a post in a saved feed unit: ("id", permalink) or ("h<hash>", None).
+
+    Facebook hides the post permalink (the timestamp link points at the group), but the post
+    id still appears in links already on the page: comment links (/posts/<id>/?comment_id=)
+    and photo links (set=gm.<id>). Without either, the key hashes the author and the start of
+    the text, which "See more" does not change.
+    """
+    post_id, permalink = _post_id(item.get("links") or [])
+    if post_id:
+        return post_id, permalink
+    html = item.get("html") or ""
+    for pattern in (_HTML_POST_ID, _PHOTO_SET_ID):
+        found = Counter(pattern.findall(html)).most_common(1)
+        if found:
+            return found[0][0], None
+    basis = f"{fold(item.get('author') or '')}|{fold(item.get('text') or '')[:KEY_PREFIX_CHARS]}"
+    return "h" + hashlib.sha1(basis.encode()).hexdigest()[:16], None
+
+
+def _time_labels(links: list[dict], permalink: str | None) -> list[str]:
+    """The post's time: the permalink's aria-label (full date) and its text ("2 giờ")."""
     for link in links:
-        if permalink and (link.get("href") or "").split("?")[0] == permalink.split("?")[0]:
-            for value in (link.get("label"), link.get("text")):
-                if value and len(value) <= 40:
-                    return value
-    return ""
+        href = link.get("href") or ""
+        if "comment_id=" in href:
+            continue  # same path as the post, but the time is the comment's
+        if permalink and href.split("?")[0] == permalink.split("?")[0]:
+            return [v for v in (link.get("label"), link.get("text")) if v]
+    return []
+
+
+_VI_FULL_DATE = re.compile(
+    r"(\d{1,2})\s+tháng\s+(\d{1,2}),?\s+(\d{4})(?:\s+lúc\s+(\d{1,2}):(\d{2}))?", re.I
+)
+_EN_FULL_DATE = re.compile(
+    r"(january|february|march|april|may|june|july|august|september|october|november|december)"
+    r"\s+(\d{1,2}),\s+(\d{4})(?:\s+at\s+(\d{1,2}):(\d{2})\s*(am|pm)?)?",
+    re.I,
+)
+_MONTH_NAMES = (
+    "january february march april may june july august september october november december"
+)
+_MONTHS = {m: i for i, m in enumerate(_MONTH_NAMES.split(), start=1)}
+
+
+def parse_full_date(label: str, tz) -> datetime | None:
+    """'Thứ Năm, 19 Tháng 11, 2026 lúc 07:15' / 'Thursday, November 19, 2026 at 7:15 AM'."""
+    match = _VI_FULL_DATE.search(label or "")
+    if match:
+        day, month, year, hour, minute = match.groups()
+        return datetime(
+            int(year), int(month), int(day), int(hour or 0), int(minute or 0), tzinfo=tz
+        )
+    match = _EN_FULL_DATE.search(label or "")
+    if match:
+        month, day, year, hour, minute, ampm = match.groups()
+        h = int(hour or 0)
+        if ampm:
+            h = h % 12 + (12 if ampm.lower() == "pm" else 0)
+        return datetime(int(year), _MONTHS[month.lower()], int(day), h, int(minute or 0), tzinfo=tz)
+    return None
 
 
 def _first_line(text: str) -> str:
@@ -197,6 +289,20 @@ def _first_line(text: str) -> str:
         if line:
             return line if len(line) <= TITLE_CHARS else line[: TITLE_CHARS - 1].rstrip() + "…"
     return ""
+
+
+def salary_line(text: str) -> str | None:
+    """The line that states the salary, or one that says it is negotiable."""
+    negotiable = None
+    for line in text.splitlines():
+        folded = fold(line)
+        if not _SALARY_WORD.search(folded):
+            continue
+        if _AMOUNT_WITH_UNIT.search(folded):
+            return line.strip()[:200]
+        if negotiable is None and _NEGOTIABLE.search(folded):
+            negotiable = line.strip()[:200]
+    return negotiable
 
 
 def _line_matching(text: str, pattern: re.Pattern) -> str | None:
@@ -282,14 +388,8 @@ class FacebookCrawler(BaseCrawler):
                 if page.evaluate(_EXPAND_JS):
                     fetcher.pause((1.0, 2.0))
                 for item in page.evaluate(_EXTRACT_JS):
-                    key = (
-                        _post_id(item.get("links") or [])[0]
-                        or hashlib.sha1(
-                            (item.get("text") or item.get("article_text") or "")[:300].encode()
-                        ).hexdigest()
-                    )
                     # Later snapshots win: "See more" may have expanded the text since.
-                    posts[key] = item
+                    posts[post_key(item)[0]] = item
                 if len(posts) >= per_group:
                     break
                 page.mouse.wheel(0, random.randint(900, 2200))
@@ -305,6 +405,15 @@ class FacebookCrawler(BaseCrawler):
             )
 
     # ------------------------------------------------------------------ parse
+    @staticmethod
+    def _posted_at(labels: list[str], fetched_at: datetime) -> datetime | None:
+        tz = ZoneInfo(get_settings().timezone)
+        for label in labels:
+            when = parse_full_date(label, tz) or parse_post_time(label, fetched_at)
+            if when is not None:
+                return when
+        return None
+
     def parse(self, page: RawPage) -> list[RawPost]:
         data = json.loads(page.body)
         slug = data["group"]
@@ -314,24 +423,21 @@ class FacebookCrawler(BaseCrawler):
             if not text:
                 continue  # no message body: shared link, photo-only post, or layout change
             links = item.get("links") or []
-            post_id, permalink = _post_id(links)
-            external_id = (
-                f"{slug}:{post_id}"
-                if post_id
-                else f"{slug}:h{hashlib.sha1(fold(text)[:300].encode()).hexdigest()[:16]}"
-            )
+            key, permalink = post_key(item)
+            if permalink is None and not key.startswith("h"):
+                permalink = f"{BASE_URL}/groups/{slug}/posts/{key}/"
             out.append(
                 RawPost(
-                    external_id=external_id,
+                    external_id=f"{slug}:{key}",
                     url=permalink or group_url(slug),
                     title=_first_line(text),
                     body=text,
                     author=(item.get("author") or "").strip()[:255] or None,
                     # Free text: locations, salary and work mode come from matching lines.
                     location_raw=text,
-                    salary_raw=_line_matching(text, _SALARY_LINE),
+                    salary_raw=salary_line(text),
                     work_mode_raw=_line_matching(text, _WORK_MODE_LINE),
-                    posted_at=parse_post_time(_time_label(links, permalink), page.fetched_at),
+                    posted_at=self._posted_at(_time_labels(links, permalink), page.fetched_at),
                 )
             )
         return out

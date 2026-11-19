@@ -109,3 +109,10 @@ def test_language(text, expected) -> None:
 )
 def test_hiring_classifier(text, expected) -> None:
     assert is_hiring_post(text) is expected
+
+
+def test_district_and_short_city_names() -> None:
+    from app.pipeline.normalize import normalize_locations
+
+    assert normalize_locations(["[Cầu Giấy, HN] tuyển Senior Fullstack"]) == ["hanoi"]
+    assert normalize_locations(["Văn phòng Tân Bình"]) == ["hcmc"]
