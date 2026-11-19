@@ -101,11 +101,19 @@ def main(argv: list[str] | None = None) -> int:
         deadline = time.monotonic() + args.timeout
         try:
             while True:
-                if browser.contexts == [] or page.is_closed():
-                    print("The browser window was closed; nothing saved.", file=sys.stderr)
+                # Follow the whole browser, not one tab: the site or the browser may open,
+                # close or replace tabs during the login.
+                if not browser.is_connected():
+                    print(
+                        "The browser was closed before the login finished; nothing saved.",
+                        file=sys.stderr,
+                    )
                     return 1
                 names = {c["name"] for c in context.cookies() if site["domain"] in c["domain"]}
-                if login_complete(site, names, page.url):
+                urls = [p.url for p in context.pages if not p.is_closed()]
+                if any(login_complete(site, names, url) for url in urls) or (
+                    not urls and site["cookie"] in names
+                ):
                     break
                 if time.monotonic() > deadline:
                     browser.close()
