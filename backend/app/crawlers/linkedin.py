@@ -197,36 +197,59 @@ def clean_description(text: str) -> str:
     return text.strip()
 
 
+_AGO = re.compile(r"\bago\b|trước", re.I)
+
+
 def parse_pane(pane: dict) -> dict:
-    """Split the pane's top lines into company, location, posted label and insight chips."""
+    """Split the pane's top lines into company, location, posted label and insight chips.
+
+    The job's top card reads `company`, `title`, `location · 2 hours ago · N applicants`,
+    then insight chips. Once the page has scrolled, a sticky header (`title`,
+    `company • location`, Save, Apply) comes first, so the lines are anchored on the
+    "· ... ago ·" line rather than on the first copy of the title.
+    """
     title = (pane.get("title") or "").strip()
-    lines = [line for line in pane.get("lines") or [] if line.strip()]
-    company = None
-    if title in lines:
-        index = lines.index(title)
-        company = lines[index - 1] if index > 0 else None
-        lines = lines[index + 1 :]
-    meta = next((line for line in lines if " · " in line), "")
-    parts = [p.strip() for p in meta.split(" · ")] if meta else []
-    insights = [line for line in lines if line != meta and not _NOISE.search(line)]
+    lines = [line.strip() for line in pane.get("lines") or [] if line.strip()]
+    meta_index = next(
+        (i for i, line in enumerate(lines) if " · " in line and _AGO.search(line)), None
+    )
+    company = location = posted = None
+    insights: list[str] = []
+    if meta_index is not None:
+        parts = [p.strip() for p in lines[meta_index].split(" · ")]
+        location = parts[0] or None
+        posted = next((p for p in parts if _AGO.search(p)), None)
+        if meta_index >= 2 and lines[meta_index - 1] == title:
+            company = lines[meta_index - 2]
+        insights = [line for line in lines[meta_index + 1 :] if not _NOISE.search(line)]
+    if company is None:
+        # Sticky header: "Company • Location (On-site)".
+        header = next((line for line in lines if " • " in line), None)
+        if header:
+            company, _, rest = header.partition(" • ")
+            location = location or rest.strip() or None
     return {
         "title": title,
         "company": company,
-        "location": parts[0] if parts else None,
-        "posted": next((p for p in parts if re.search(r"ago|trước", p, re.I)), None),
+        "location": location,
+        "posted": posted,
         "insights": insights,
     }
 
 
 def parse_card(lines: list[str]) -> dict:
-    """Card text: '<title> (Verified job)' | title | company | location (mode) | status."""
-    lines = [line for line in lines if line.strip()]
-    if len(lines) >= 4:
-        return {"title": lines[1], "company": lines[2], "location": lines[3]}
+    """Card text, two layouts:
+    `Selected, <title> (Verified job)` | title | company | location (mode) | status, or
+    title | company | location (mode) | status | `Posted 3 hours ago`."""
+    lines = [line.strip() for line in lines if line.strip()]
+    posted = next((line for line in lines if _AGO.search(line)), None)
+    if len(lines) >= 3 and (lines[0].startswith("Selected, ") or lines[0].startswith(lines[1])):
+        lines = lines[1:]
     return {
         "title": lines[0] if lines else "",
         "company": lines[1] if len(lines) > 1 else None,
-        "location": None,
+        "location": lines[2] if len(lines) > 2 else None,
+        "posted": posted,
     }
 
 
@@ -340,7 +363,7 @@ class LinkedinCrawler(BaseCrawler):
                 continue
             card = parse_card(job.get("card") or [])
             pane = parse_pane(job["pane"]) if job.get("pane") else None
-            facts = pane or {**card, "posted": None, "insights": []}
+            facts = pane or {**card, "insights": []}
             title = facts["title"] or card["title"]
             if not title:
                 continue
@@ -369,7 +392,9 @@ class LinkedinCrawler(BaseCrawler):
                     location_raw=location,
                     salary_raw=normalize_salary(salary),
                     work_mode_raw=work_mode,
-                    posted_at=parse_relative_time(facts["posted"] or "", page.fetched_at),
+                    posted_at=parse_relative_time(
+                        facts["posted"] or card["posted"] or "", page.fetched_at
+                    ),
                     extra={"levels": levels, "employment_type": employment},
                 )
             )

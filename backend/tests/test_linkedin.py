@@ -30,7 +30,13 @@ def sample_page() -> RawPage:
 
 def test_parse_jobs_from_panes_and_cards() -> None:
     posts = LinkedinCrawler().parse(sample_page())
-    assert [p.external_id for p in posts] == ["4400000001", "4400000002", "4400000003"]
+    assert [p.external_id for p in posts] == [
+        "4400000001",
+        "4400000002",
+        "4400000003",
+        "4400000004",
+        "4400000005",
+    ]
 
     first = posts[0]
     assert first.url == "https://www.linkedin.com/jobs/view/4400000001/"
@@ -55,6 +61,19 @@ def test_parse_jobs_from_panes_and_cards() -> None:
     assert card_only.location_raw == "Vietnam (Remote)"
     assert card_only.work_mode_raw == "remote"
     assert card_only.body == "" and card_only.posted_at is None
+
+    # Scrolled page: a sticky header repeats the title before the real top card.
+    sticky = posts[3]
+    assert (sticky.title, sticky.company) == ("Data Engineer", "Mau Data JSC")
+    assert sticky.location_raw == "Da Nang, Vietnam"
+    assert sticky.posted_at == NOW - timedelta(hours=5)
+    assert sticky.extra["employment_type"] == "FULL_TIME"
+
+    # Second card layout (title first, "Posted ..." last), no pane.
+    second_layout = posts[4]
+    assert (second_layout.title, second_layout.company) == ("Mobile Developer", "Card Only Co")
+    assert second_layout.location_raw == "Hanoi (Hybrid)"
+    assert second_layout.posted_at == NOW - timedelta(hours=2)
 
 
 def test_rows_are_normalized() -> None:
