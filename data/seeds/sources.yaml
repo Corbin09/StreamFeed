@@ -23,3 +23,17 @@ sources:
       max_scrolls: 12       # scroll steps per group (3-8 s apart)
       max_posts_per_run: 150
       daily_window: "07:00-09:00"  # local time (TIMEZONE), random minute each day
+
+  - type: linkedin
+    name: LinkedIn - job search
+    enabled: false          # enable after `python -m app.crawlers.login linkedin` (secondary account)
+    interval_minutes: 1440  # once a day; the run time comes from daily_window
+    config:
+      searches:             # LinkedIn job searches, past 24 hours, newest first
+        - keywords: "software engineer"
+          location: "Vietnam"
+        - keywords: "developer"
+          location: "Vietnam"
+      max_jobs_per_search: 15   # cards clicked per search (3-8 s apart)
+      max_posts_per_run: 30
+      daily_window: "09:00-11:00"  # local time (TIMEZONE), random minute each day

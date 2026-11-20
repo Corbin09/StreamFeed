@@ -10,6 +10,7 @@ from app.crawlers.base import BaseCrawler
 BUILTIN_MODULES: list[str] = [
     "app.crawlers.itviec",
     "app.crawlers.facebook",
+    "app.crawlers.linkedin",
 ]
 
 

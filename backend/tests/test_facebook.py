@@ -249,3 +249,13 @@ def test_post_key_falls_back_to_saved_html_and_text_hash() -> None:
     a = post_key({"author": "A", "text": "Tuyển dev " + "x" * 200})
     b = post_key({"author": "A", "text": "Tuyển dev " + "x" * 200 + " Xem thêm"})
     assert a == b and a[0].startswith("h")  # "See more" does not change the key
+
+
+def test_linkedin_login_complete_detection() -> None:
+    from app.crawlers.login import SITES, login_complete
+
+    site = SITES["linkedin"]
+    assert login_complete(site, {"li_at", "JSESSIONID"}, "https://www.linkedin.com/feed/")
+    assert not login_complete(site, {"JSESSIONID"}, "https://www.linkedin.com/feed/")
+    assert not login_complete(site, {"li_at"}, "https://www.linkedin.com/checkpoint/challenge/x")
+    assert not login_complete(site, {"li_at"}, "https://www.linkedin.com/uas/login-submit")

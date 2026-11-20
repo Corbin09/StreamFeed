@@ -2,7 +2,7 @@
 
 Usage (from backend/, with the dev stack running so the database is reachable):
 
-    .venv/bin/python -m app.crawlers.login facebook [--browser-path /usr/bin/brave-browser]
+    .venv/bin/python -m app.crawlers.login facebook|linkedin [--browser-path /usr/bin/brave-browser]
 
 A visible browser window opens on the site's login page. Log in yourself (use the secondary
 account, pass 2FA). The CLI notices when the login is complete (session cookie set and no
@@ -36,6 +36,12 @@ SITES: dict[str, dict[str, str]] = {
         "domain": "facebook.com",
         # While the page is on one of these, the login is not finished yet.
         "pending_paths": "/login,/checkpoint,/two_step_verification,/two_factor,/recover",
+    },
+    "linkedin": {
+        "login_url": "https://www.linkedin.com/login",
+        "cookie": "li_at",  # LinkedIn's session cookie, set only after a full login
+        "domain": "linkedin.com",
+        "pending_paths": "/login,/uas/,/checkpoint,/authwall,/challenge",
     },
 }
 

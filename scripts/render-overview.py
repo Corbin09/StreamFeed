@@ -120,7 +120,7 @@ label(462, 385, "SQL", anchor="start")
 cylinder_stack(470, 470, 80, 105, "PostgreSQL", "posts · sources|crawl_runs · queue")
 
 # Source sites (right, stacked cylinders like a cluster)
-stacked_box(860, 300, 210, 64, "Source Sites", "ITviec · Facebook groups")
+stacked_box(860, 300, 210, 64, "Source Sites", "ITviec · Facebook · LinkedIn")
 
 # Worker frame
 add(f'<rect x="40" y="660" width="830" height="300" rx="12" fill="none" stroke="{ORANGE_D}" stroke-width="1.5" stroke-dasharray="8,6"/>')
