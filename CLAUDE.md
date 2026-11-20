@@ -6,6 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 StreamFeed is a personal-use aggregator: it crawls posts from multiple sources into one searchable, filterable, de-duplicated feed. Phase 1 is IT job posts (ITviec, LinkedIn, Facebook groups); phase 2 adds marketplace listings (vehicles, real estate, keyboards, mice). There are no user accounts.
 
+## Start here
+
+- **Operations notes (fresh clone, what is not in git, crawler rules, gotchas):** @docs/OPERATIONS.md
+- **Full design:** `docs/ARCHITECTURE.md` (read the relevant section before building a step). Visual summary: `docs/diagrams/streamfeed-overview.png`.
+- **One command to run everything:** `scripts/run.sh up` (see `scripts/run.sh help`).
+- Area-specific guidance: `backend/CLAUDE.md`, `frontend/CLAUDE.md` (loaded when you work in those folders).
+- History: `git log --reverse --oneline` reads as the build order; commit bodies explain the decisions (e.g. why the LinkedIn guest crawler was dropped).
+
 ## Language convention
 
 - Everything in the repo is **English**: UI labels, code, identifiers, comments, docs, API, commit messages, logs.
@@ -17,6 +25,18 @@ StreamFeed is a personal-use aggregator: it crawls posts from multiple sources i
 Run all commands from the repo root unless noted.
 
 ```bash
+# All-in-one wrapper (prefer this; add --prod for the server/demo stack)
+scripts/run.sh up                    # check Docker, create .env, build, start, wait for the API, print URLs + source status
+scripts/run.sh down|restart|status|logs [svc]
+scripts/run.sh login facebook|linkedin [--browser-path /usr/bin/brave-browser]  # headed login + enable the source
+scripts/run.sh crawl <source>        # one crawl now, inside the worker container
+scripts/run.sh backup                # pg_dump -> data/exports/*.dump (gitignored; copy it off the machine)
+scripts/run.sh restore <file.dump>   # replace the database from a dump
+scripts/run.sh dev-setup             # backend/.venv + frontend/node_modules on the host
+scripts/run.sh check                 # ruff + pytest + eslint + tsc (starts Postgres)
+scripts/run.sh diagrams              # redraw docs/diagrams/streamfeed-overview.*
+
+# Raw compose commands (what run.sh wraps)
 cp .env.example .env                 # first time only
 docker compose up -d --build         # dev: postgres (127.0.0.1:5433), backend (127.0.0.1:8000), worker, ollama (127.0.0.1:11434), frontend (:3000)
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build  # server/demo: only :3000, Basic Auth required
@@ -125,3 +145,9 @@ Rules that are easy to get wrong:
 - **On a login, checkpoint or captcha page, stop at once and set `needs_login`. Never retry.**
 - **Login sessions are Playwright `storage_state` JSON files** in `data/sessions/` (gitignored, mode 0600), not persistent profiles. They are created on the host with a headed login CLI.
 - **Normalization matches on unaccented, lower-cased text** and stores canonical English keys (`hanoi`, `senior`). The original currency is kept.
+
+## Status and next steps
+
+- Phase 1 is done: ITviec (HTTP), Facebook groups and LinkedIn search (logged-in browser, once a day), hiring filter, API, UI, worker, prod override.
+- Next: phase 2 marketplace listings (vehicles, real estate, keyboards, mice). Add a new `posts.category` with its attribute schema in `app/schemas/attributes/<category>.py` and new crawler plugins; see `docs/ARCHITECTURE.md` §10 (Extensibility) and `backend/CLAUDE.md`.
+- The user mainly looks for jobs in **Hanoi**; tune source configs for Hanoi.

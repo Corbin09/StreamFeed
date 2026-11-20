@@ -30,3 +30,6 @@ data/exports/*
 
 # Mermaid exports from scripts/render-diagrams.sh (generated on demand)
 docs/diagrams/mermaid/
+
+# Third-party style reference for the overview drawing (not ours to publish)
+docs/diagrams/template.jpeg

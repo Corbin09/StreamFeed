@@ -150,11 +150,14 @@ label(482, 622, "Claim runs ·|advisory lock", anchor="start")
 arrow([(760, 720), (930, 364)])
 label(860, 520, "HTTP ·|headless|browser", anchor="start")
 
-# Scheduler & queue poller (dashed into runner)
-box(110, 870, 200, 50, "Scheduler", "interval ± jitter")
-box(560, 870, 200, 50, "Queue Poller", "every 15 s")
-arrow([(260, 870), (420, 784)], dashed=True)
-arrow([(610, 870), (520, 784)], dashed=True)
+# Scheduler & queue poller (dashed into runner); heartbeat + housekeeping on a side thread
+box(70, 870, 200, 50, "Scheduler", "interval · daily window")
+box(330, 870, 200, 50, "Queue Poller", "Run now · every 15 s")
+arrow([(220, 870), (400, 784)], dashed=True)
+arrow([(430, 870), (450, 784)], dashed=True)
+box(600, 870, 200, 50, "Housekeeping", "heartbeat · daily prune")
+arrow([(800, 895), (1105, 895), (1105, 660), (1078, 660)], dashed=True)
+label(1095, 930, "delete > 30 days", anchor="end")
 
 # Raw store + sessions (right, outside frame)
 cylinder(1000, 620, 75, 80, "Raw Pages", "data/raw")
@@ -162,7 +165,7 @@ arrow([(850, 760), (925, 700)])
 label(880, 752, "save page", anchor="start")
 cylinder(1000, 1000, 75, 80, "Sessions", "data/sessions")
 arrow([(940, 1000), (800, 800)])
-label(905, 880, "load|storage_state", anchor="start")
+label(905, 830, "load|storage_state", anchor="start")
 
 # Bottom: owner + login CLI
 person(80, 1010, TEAL, "You", "(manual login)")

@@ -27,29 +27,30 @@ data/
   raw/               raw crawled HTML/JSON (gitignored)
   sessions/          Playwright login sessions (gitignored, keep private!)
   seeds/             source definitions (sources.yaml)
-  exports/           CSV exports (gitignored)
+  exports/           database dumps from scripts/run.sh backup (gitignored)
 ```
 
 ## Getting started
 
-### With Docker
+Requires Docker with the Compose v2 plugin. One script does the rest:
 
 ```bash
-cp .env.example .env
-docker compose up --build
-curl http://localhost:8000/health   # {"status":"ok"}
+scripts/run.sh up                   # create .env, build, start, wait for the API, print URLs
 open http://localhost:3000          # the feed
+scripts/run.sh login facebook       # optional: log in with a secondary account (also: linkedin)
+scripts/run.sh help                 # every command: status, logs, crawl, backup, restore, check...
 ```
+
+Before moving to another machine, run `scripts/run.sh backup` and keep the dump: the database
+and login sessions are not in git. See [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ### Local backend development
 
 ```bash
+scripts/run.sh dev-setup            # backend/.venv + frontend/node_modules
 docker compose up -d postgres
-cd backend
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-uvicorn app.main:app --reload
-pytest
+cd backend && .venv/bin/uvicorn app.main:app --reload
+scripts/run.sh check                # ruff, pytest, eslint, tsc
 ```
 
 ### Deploy or share a demo
@@ -57,12 +58,12 @@ pytest
 Only the frontend is published; it proxies `/api` to the backend and asks for a login.
 
 ```bash
-# in .env: BASIC_AUTH_USER, BASIC_AUTH_PASSWORD and a strong POSTGRES_PASSWORD (before the first start)
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# set a strong POSTGRES_PASSWORD in .env before the first start; Basic Auth credentials are generated if empty
+scripts/run.sh up --prod
 ngrok http 3000          # or Cloudflare Tunnel / Caddy: always serve it over HTTPS
 ```
 
-The worker crawls ITviec every 2 hours (change it on the Sources page) and starts right away when the last run is older than that.
+The worker crawls ITviec every 2 hours and Facebook/LinkedIn once a day inside their `daily_window` (see `data/seeds/sources.yaml`).
 
 ### Local frontend development
 
@@ -91,4 +92,4 @@ The scripts require Node.js 18+. The first run downloads mermaid-cli and Chromiu
 
 ## Notes on LinkedIn / Facebook crawling
 
-These sources are crawled with a logged-in browser session. Use a **secondary account**, keep crawl rates low, and never commit `data/sessions/`. When a login or checkpoint page is detected, the source is paused and marked `needs_login`.
+These sources are crawled once a day with a logged-in browser session (`scripts/run.sh login facebook|linkedin`). Use a **secondary account** and never commit `data/sessions/`. When a login or checkpoint page is detected, the source is paused and marked `needs_login`; log in again to resume. Facebook posts are kept only when a local LLM (Ollama) or the contact rules classify them as hiring posts.
