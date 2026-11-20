@@ -54,8 +54,8 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
 
 ### Built so far
 
-- `docker-compose.yml`: `postgres`, `backend` (API, migrates + seeds on start, healthcheck), `worker` (same image, `python -m app.worker`), `frontend`. Postgres and API ports bind to `127.0.0.1` only.
-- `docker-compose.prod.yml` (override): removes the Postgres/API ports and requires `BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD`, `POSTGRES_PASSWORD`. Put HTTPS (tunnel or Caddy) in front.
+- `docker-compose.yml`: `postgres`, `backend` (API, migrates + seeds on start, healthcheck), `worker` (same image, `python -m app.worker`), `ollama` (local LLM for the hiring filter), `frontend`. Postgres, API and Ollama ports bind to `127.0.0.1` only.
+- `docker-compose.prod.yml` (override): removes the Postgres/API/Ollama ports and requires `BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD`, `POSTGRES_PASSWORD`. Put HTTPS (tunnel or Caddy) in front.
 - `backend/app/main.py`: FastAPI app; routers in `app/api/routes/` (see the REST API bullet below).
 - `backend/app/config.py`: pydantic-settings that read `.env` or `../.env`. `CORS_ORIGINS` is a comma-separated string, exposed as `cors_origin_list`.
 - `data/seeds/sources.yaml`: source definitions, loaded by `app/seed.py`. The loader upserts by `name` but never overwrites the runtime `enabled`/`status` of existing sources.
@@ -77,7 +77,7 @@ Postgres is mapped to host port **5433**, because 5432 is taken on the dev machi
     - It sets the outcome (success / failed / needs_login / selector drift) and updates `consecutive_failures` (status `error` after 5).
 - **Pipeline** (`backend/app/pipeline/`): `ingest.process_posts` runs these steps (see ARCHITECTURE.md §7):
   1. `merge_raw_posts`: the first non-empty value wins, so crawlers must yield their most precise page first.
-  2. Filter out non-hiring posts when `filter_non_jobs` is set.
+  2. Filter out non-hiring posts when `filter_non_jobs` is set (local LLM, then contact rules; see the hiring filter bullet).
   3. `build_row` normalizes the post:
      - `language` (lingua, VI/EN);
      - `salary` (VI/EN amounts and units; values ≥ 100k are VND);

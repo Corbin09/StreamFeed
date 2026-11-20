@@ -73,15 +73,20 @@ services:
     shm_size: 512m
 
   # Local LLM (Ollama, CPU) that decides which Facebook group posts are hiring posts
-  # (backend/app/pipeline/llm.py). Pulls LLM_MODEL (~1.9 GB) into the `ollama` volume on the
-  # first start; the model stays in RAM (~2.5 GB) for 10 minutes after the last post.
+  # (backend/app/pipeline/llm.py). Pulls LLM_MODEL (~1.9 GB) into the `ollama` volume when it
+  # is missing; the model stays in RAM (~2.5 GB) for 10 minutes after the last post.
   ollama:
     image: ollama/ollama:0.40.16
     restart: unless-stopped
     entrypoint:
       - /bin/sh
       - -c
-      - ollama serve & until ollama list >/dev/null 2>&1; do sleep 1; done; ollama pull "$$LLM_MODEL"; wait
+      # Pull only when the model is missing, so a restart needs no network and logs no
+      # progress bars. Serving continues if the pull fails.
+      - >-
+        ollama serve & until ollama list >/dev/null 2>&1; do sleep 1; done;
+        ollama show "$$LLM_MODEL" >/dev/null 2>&1 || ollama pull "$$LLM_MODEL" 2>&1 | tail -n 1;
+        wait
     environment:
       LLM_MODEL: ${LLM_MODEL:-hf.co/QuantFactory/Arcee-VyLinh-GGUF:Q4_K_M}
       OLLAMA_KEEP_ALIVE: 10m

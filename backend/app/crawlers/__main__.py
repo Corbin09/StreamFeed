@@ -103,6 +103,9 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else get_settings().log_level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    if not args.verbose:
+        # One line per HTTP request (and per post sent to the LLM) is noise.
+        logging.getLogger("httpx").setLevel(logging.WARNING)
     return args.func(args)
 
 

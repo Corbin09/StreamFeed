@@ -80,7 +80,7 @@ _EXPAND_JS = """
 
 # Each child of the feed is one post. Since late 2026 the post itself is not a
 # [role="article"]; only its comments are, so everything inside an article is skipped.
-_EXTRACT_JS = """
+_EXTRACT_JS = r"""
 () => {
   const feed = document.querySelector('[role="feed"]');
   if (!feed) return [];
